@@ -1,4 +1,4 @@
-name: athan
+name: athan_app_v2
 description: "A new Flutter project."
 publish_to: "none"
 version: 0.2.0
@@ -20,6 +20,7 @@ dependencies:
   timezone: ^0.9.3
   liquid_pull_to_refresh: ^3.0.1
   geolocator: ^11.0.0
+  geocoding: ^3.0.0
 
 dev_dependencies:
   flutter_test:

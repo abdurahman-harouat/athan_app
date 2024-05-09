@@ -1,15 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:athan/loading/home_page_loading.dart';
-import 'package:athan/local_notification_service.dart';
-import 'package:athan/timer.dart';
-import 'package:athan/utils/chooseIcon.dart';
-import 'package:athan/utils/formatCurrentDate.dart';
-import 'package:athan/utils/formatCurrentPrayer.dart';
+import 'package:athan_app_v2/loading/home_page_loading.dart';
+import 'package:athan_app_v2/local_notification_service.dart';
+import 'package:athan_app_v2/timer.dart';
+import 'package:athan_app_v2/utils/chooseIcon.dart';
+import 'package:athan_app_v2/utils/formatCurrentDate.dart';
+import 'package:athan_app_v2/utils/formatCurrentPrayer.dart';
+import 'package:athan_app_v2/utils/location.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import 'package:http/http.dart' as http;
 import 'package:liquid_pull_to_refresh/liquid_pull_to_refresh.dart';
@@ -22,8 +23,8 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  late String latitude;
-  late String longitude;
+  late double latitude;
+  late double longitude;
 
   Future _handleRefresh() async {
     setState(() {
@@ -79,54 +80,16 @@ class _HomePageState extends State<HomePage> {
 
   List passedPrayer = [];
 
-  Future<Position> _determinePosition() async {
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    // Test if location services are enabled.
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      // Location services are not enabled don't continue
-      // accessing the position and request users of the
-      // App to enable the location services.
-      return Future.error('Location services are disabled.');
-    }
-
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        // Permissions are denied, next time you could try
-        // requesting permissions again (this is also where
-        // Android's shouldShowRequestPermissionRationale
-        // returned true. According to Android guidelines
-        // your App should show an explanatory UI now.
-        return Future.error('Location permissions are denied');
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      // Permissions are denied forever, handle appropriately.
-      return Future.error(
-          'Location permissions are permanently denied, we cannot request permissions.');
-    }
-
-    // When we reach here, permissions are granted and we can
-    // continue accessing the position of the device.
-    return await Geolocator.getCurrentPosition();
-  }
-
   Future<void> getAthanTimes() async {
-    await _determinePosition().then((value) {
-      latitude = '${value.latitude}';
-      longitude = '${value.longitude}';
-    });
+    Position position = await UsersLocation.determineLocation();
+    latitude = position.latitude;
+    longitude = position.longitude;
 
     try {
       var response = await http.get(Uri.https(
         'api.aladhan.com',
         '/v1/calendar/${_currentDate.year}/${_currentDate.month}',
-        {'latitude': latitude, 'longitude': longitude},
+        {'latitude': '$latitude', 'longitude': '$latitude'},
       ));
 
       if (response.statusCode == 200) {
