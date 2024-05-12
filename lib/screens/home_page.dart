@@ -89,7 +89,7 @@ class _HomePageState extends State<HomePage> {
       var response = await http.get(Uri.https(
         'api.aladhan.com',
         '/v1/calendar/${_currentDate.year}/${_currentDate.month}',
-        {'latitude': '$latitude', 'longitude': '$latitude'},
+        {'latitude': '$latitude', 'longitude': '$longitude'},
       ));
 
       if (response.statusCode == 200) {

@@ -1,5 +1,4 @@
 import 'package:athan_app_v2/local_notification_service.dart';
-import 'package:athan_app_v2/screens/checking_permission_page.dart';
 import 'package:athan_app_v2/theme.dart';
 import 'package:flutter/material.dart';
 
