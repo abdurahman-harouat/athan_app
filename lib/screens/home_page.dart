@@ -1,16 +1,21 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:athan_app_v2/loading/home_page_loading.dart';
+import 'package:athan_app_v2/models/hijri_date_model.dart';
+import 'package:athan_app_v2/models/timings_model.dart';
+import 'package:athan_app_v2/screens/loading.dart';
 import 'package:athan_app_v2/local_notification_service.dart';
 import 'package:athan_app_v2/timer.dart';
-import 'package:athan_app_v2/utils/chooseIcon.dart';
+import 'package:athan_app_v2/utils/current_time.dart';
 import 'package:athan_app_v2/utils/formatCurrentDate.dart';
-import 'package:athan_app_v2/utils/formatCurrentPrayer.dart';
 import 'package:athan_app_v2/utils/location.dart';
+import 'package:carousel_slider/carousel_slider.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:hive/hive.dart';
 
 import 'package:http/http.dart' as http;
 import 'package:liquid_pull_to_refresh/liquid_pull_to_refresh.dart';
@@ -23,182 +28,161 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  late double latitude;
-  late double longitude;
-
-  Future _handleRefresh() async {
-    setState(() {
-      _currentDate = DateTime.now();
-    });
-  }
-
   Future scheduledNotification() async {
     final bool? grantedNotificationPermission = await LocalNotificationService
         .androidImplementation
         ?.requestNotificationsPermission();
 
     if (grantedNotificationPermission != null) {
-      if (nextPrayerTime.isAfter(prayerReminder) &&
-          nextPrayerTime.isAfter(thirtyMinuteReminder)) {
+      if (nextPrayerTime.isAfter(prayerReminderTime) ||
+          nextPrayerTime.isAfter(jumuaaPrayerReminder)) {
         LocalNotificationService.showSchduledNotification(
             _currentDate.year,
             _currentDate.month,
             _currentDate.day,
-            (isFriday && nextPrayerName == "Dhuhr")
-                ? thirtyMinuteReminder.hour
-                : prayerReminder.hour,
-            (isFriday && nextPrayerName == "Dhuhr")
-                ? thirtyMinuteReminder.minute
-                : prayerReminder.minute,
-            formatPrayerName(nextPrayerName));
+            (isFriday && nextPrayerName == "الظهر")
+                ? jumuaaPrayerReminder.hour
+                : jumuaaPrayerReminder.hour,
+            (isFriday && nextPrayerName == "الظهر")
+                ? jumuaaPrayerReminder.minute
+                : prayerReminderTime.minute,
+            nextPrayerName);
       }
     }
   }
 
-  late Duration nextPrayerDuration = const Duration(days: 1);
-  String nextPrayerName = "";
+  final athan_box = Hive.box('athan_box');
   late DateTime nextPrayerTime;
-  late DateTime prayerReminder;
-  DateTime thirtyMinuteReminder = DateTime.now();
-  bool isFriday = false;
+  late String nextPrayerName;
+  late DateTime prayerReminderTime; // i will use it later
+  late DateTime jumuaaPrayerReminder; // i will use it later
+  bool isFriday = false; // i will use it later
 
-  DateTime _currentDate = DateTime.now();
-  // this will be parsed in a DateTime
-  String formattedCurrentDate = formatDateReverse(DateTime.now());
+  final DateTime _currentDate = DateTime.now();
+
+  String formattedCurrentDate =
+      formatDateReverse(DateTime.now()); // needs an improvement
   String formattedTommorowDate =
       formatDateReverse(DateTime.now().add(const Duration(days: 1)));
 
   late Duration difference;
-  String currentHijriYear = "";
-  String currentHijriDay = "";
-  String currentHijriMonth = "";
 
-  Set<String> desiredTimingNames = {'Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'};
-  Map<String, dynamic> todaysTimings = {};
-  late dynamic tomorrowFajr;
-  late DateTime tommorowsFajr;
+  List<TimingsModel> prayerTimingsOfTheMonth = [];
+  List<HijriDateModel> hijriDateOfTheMonth = [];
+  int currentIndex = DateTime.now().day - 1;
 
-  List passedPrayer = [];
+  late double latitude;
+  late double longitude;
+  late String? locationName;
 
   Future<void> getAthanTimes() async {
-    Position position = await UsersLocation.determineLocation();
-    latitude = position.latitude;
-    longitude = position.longitude;
+    var storage = athan_box.get('athan_data');
+    if (storage == null || storage.isEmpty) {
+      Position position = await UsersLocation.determineLocation();
+      latitude = position.latitude;
+      longitude = position.longitude;
 
-    try {
-      var response = await http.get(Uri.https(
-        'api.aladhan.com',
-        '/v1/calendar/${_currentDate.year}/${_currentDate.month}',
-        {'latitude': '$latitude', 'longitude': '$longitude'},
-      ));
+      setLocaleIdentifier("ar_DZ");
+      List<Placemark> placemarks =
+          await placemarkFromCoordinates(latitude, longitude);
+      locationName = placemarks[0].locality;
 
-      if (response.statusCode == 200) {
-        // Decode data
-        var jsonData = jsonDecode(response.body);
-
-        // if response is 200
-        if (jsonData['code'] == 200 && jsonData['data'] != null) {
-          // Getting every single item in data
-          for (var item in jsonData['data']) {
-            // Getting Todays date
-            if (item['date']['gregorian']['date'] == formatDate(_currentDate)) {
-              // Getting todays timings
-              todaysTimings = item['timings'];
-
-              isFriday = item['date']['hijri']['weekday']['ar'] == "الجمعة";
-              //setting current hijri year
-              currentHijriYear = item['date']['hijri']['year'];
-              currentHijriDay = item['date']['hijri']['day'];
-              currentHijriMonth = item['date']['hijri']['month']['ar'];
-            }
-
-            // Getting Tomorrows Date
-            if (item['date']['gregorian']['date'] ==
-                formatDate(_currentDate.add(const Duration(days: 1)))) {
-              // Get tommorows fajr
-              tomorrowFajr = item['timings']["Fajr"];
-              break; // Exit the loop after finding the date
-            }
-          }
-
-          // finding next prayer duration and name
-          todaysTimings.forEach((key, value) {
-            if (desiredTimingNames.contains(key)) {
-              // Step 1 : Get current time and prayers time
-              // get todays prayer time
-              DateTime prayerTime = DateTime.parse(
-                  "$formattedCurrentDate ${value.toString().substring(0, 5)}:00");
-
-              // get current time
-              String currentHour = _currentDate.hour.toString().padLeft(2, '0');
-              String currentMinute =
-                  _currentDate.minute.toString().padLeft(2, '0');
-              String currentTimeString =
-                  "$formattedCurrentDate $currentHour:$currentMinute:00";
-
-              DateTime currentTime = DateTime.parse(currentTimeString);
-
-              // Step 2 : checking is we are after or before isha
-              // if passedPrayer >= 5 , we are after isha
-              if (currentTime.isAfter(prayerTime)) {
-                passedPrayer.add(key);
-              }
-
-              if (passedPrayer.length < 5) {
-                // Step 3: Calculate the difference
-                difference = prayerTime.difference(currentTime);
-
-                if (!difference.isNegative) {
-                  if ((difference < nextPrayerDuration)) {
-                    nextPrayerDuration = difference;
-                    nextPrayerName = key;
-                    nextPrayerTime = prayerTime;
-
-                    // this reminder is for Jumuaa
-                    thirtyMinuteReminder =
-                        nextPrayerTime.subtract(const Duration(minutes: 30));
-                    scheduledNotification();
-                    if (nextPrayerName == "Fajr" ||
-                        nextPrayerName == "Maghrib") {
-                      prayerReminder =
-                          nextPrayerTime.subtract(const Duration(minutes: 10));
-                      // TODO : making custom reminder for every prayer
-                    } else {
-                      prayerReminder =
-                          nextPrayerTime.subtract(const Duration(minutes: 5));
-                    }
-                  }
-                }
-              } else {
-                // Get tomorrow Fajr DateTime
-                tommorowsFajr = DateTime.parse(
-                    "$formattedTommorowDate ${tomorrowFajr?.toString().substring(0, 5)}:00");
-
-                nextPrayerDuration = tommorowsFajr.difference(currentTime);
-                nextPrayerName = "Fajr";
-              }
-            }
-          });
-        } else {
-          // Handle API errors (e.g., print error message)
-          print('Error: ${jsonData['status']}');
-        }
-      } else {
-        // Handle API errors (e.g., print error message)
-        print('Error: ${response.statusCode}');
-      }
-    } catch (error) {
-      // Handle network errors
-      print('Network Error: $error');
+      // storing data in our device
+      athan_box.put('athan_data', [latitude, longitude, locationName]);
+    } else {
+      latitude = storage[0];
+      longitude = storage[1];
+      locationName = storage[2];
     }
+
+    var response = await http.get(Uri.https(
+      'api.aladhan.com',
+      '/v1/calendar/${_currentDate.year}/${_currentDate.month}',
+      {'latitude': '$latitude', 'longitude': '$longitude'},
+    ));
+
+    if (response.statusCode == 200) {
+      // Decode data
+      var jsonData = jsonDecode(response.body);
+
+      // Getting every single item in data
+      for (var item in jsonData['data']) {
+        // making a list of all prayers of the month
+        var timings = item['timings'];
+        prayerTimingsOfTheMonth.add(TimingsModel.fromJson(timings));
+
+        // making a list of all hijri dates of the month
+        var hijri = item['date']['hijri'];
+        hijriDateOfTheMonth.add(HijriDateModel.fromJson(hijri));
+      }
+
+      DateTime fajrTime = DateTime.parse(
+          "$formattedCurrentDate ${prayerTimingsOfTheMonth[currentIndex].fajr.toString().substring(0, 5)}:00");
+      DateTime dhuhrTime = DateTime.parse(
+          "$formattedCurrentDate ${prayerTimingsOfTheMonth[currentIndex].dhuhr.toString().substring(0, 5)}:00");
+      DateTime asrTime = DateTime.parse(
+          "$formattedCurrentDate ${prayerTimingsOfTheMonth[currentIndex].asr.toString().substring(0, 5)}:00");
+      DateTime maghribTime = DateTime.parse(
+          "$formattedCurrentDate ${prayerTimingsOfTheMonth[currentIndex].maghrib.toString().substring(0, 5)}:00");
+      DateTime ishaTime = DateTime.parse(
+          "$formattedCurrentDate ${prayerTimingsOfTheMonth[currentIndex].isha.toString().substring(0, 5)}:00");
+
+      DateTime tomorrowFajrTime = DateTime.parse(
+          "$formattedTommorowDate ${prayerTimingsOfTheMonth[currentIndex + 1].fajr.toString().substring(0, 5)}:00");
+
+      isFriday = hijriDateOfTheMonth[currentIndex].arabicWeekDay == "الجمعة";
+
+      if (currentTime.isBefore(fajrTime)) {
+        nextPrayerName = 'فجر';
+        difference = fajrTime.difference(currentTime);
+        prayerReminderTime = fajrTime.subtract(const Duration(minutes: 10));
+        nextPrayerTime = fajrTime;
+      } else if (currentTime.isAfter(fajrTime) &&
+          currentTime.isBefore(dhuhrTime)) {
+        nextPrayerName = 'الظهر';
+        difference = dhuhrTime.difference(currentTime);
+        prayerReminderTime = dhuhrTime.subtract(const Duration(minutes: 5));
+        nextPrayerTime = dhuhrTime;
+        if (isFriday) {
+          jumuaaPrayerReminder =
+              dhuhrTime.subtract(const Duration(minutes: 30));
+        }
+      } else if (currentTime.isAfter(dhuhrTime) &&
+          currentTime.isBefore(asrTime)) {
+        nextPrayerName = 'العصر';
+        difference = asrTime.difference(currentTime);
+        prayerReminderTime = asrTime.subtract(const Duration(minutes: 5));
+        nextPrayerTime = asrTime;
+      } else if (currentTime.isAfter(asrTime) &&
+          currentTime.isBefore(maghribTime)) {
+        nextPrayerName = 'المغرب';
+        difference = maghribTime.difference(currentTime);
+        prayerReminderTime = maghribTime.subtract(const Duration(minutes: 10));
+        nextPrayerTime = maghribTime;
+      } else if (currentTime.isAfter(maghribTime) &&
+          currentTime.isBefore(ishaTime)) {
+        nextPrayerName = 'العشاء';
+        difference = ishaTime.difference(currentTime);
+        prayerReminderTime = ishaTime.subtract(const Duration(minutes: 5));
+        nextPrayerTime = ishaTime;
+      } else if (currentTime.isAfter(ishaTime)) {
+        nextPrayerName = 'الفجر';
+        difference = tomorrowFajrTime.difference(currentTime);
+        prayerReminderTime =
+            tomorrowFajrTime.subtract(const Duration(minutes: 10));
+        nextPrayerTime = tomorrowFajrTime;
+      }
+    }
+    throw Error();
+  }
+
+  Future _handleRefresh() async {
+    currentIndex = DateTime.now().day - 1;
+    setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
-    DateTime firstDayOfNextMonth =
-        DateTime(_currentDate.year, _currentDate.month + 1, 1);
-    DateTime lastDayOfThisMonth =
-        firstDayOfNextMonth.subtract(const Duration(days: 1));
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
@@ -230,7 +214,7 @@ class _HomePageState extends State<HomePage> {
                                   IconButton(
                                     icon: Icon(
                                       Icons.arrow_circle_right_rounded,
-                                      color: _currentDate.day == 1
+                                      color: currentIndex == 0
                                           ? Theme.of(context)
                                               .colorScheme
                                               .outline
@@ -238,20 +222,18 @@ class _HomePageState extends State<HomePage> {
                                               .colorScheme
                                               .onSecondaryContainer,
                                     ),
-                                    onPressed: _currentDate.day == 1
+                                    onPressed: currentIndex == 0
                                         ? null
                                         : () {
-                                            setState(() {
-                                              _currentDate =
-                                                  _currentDate.subtract(
-                                                      const Duration(days: 1));
-                                            });
+                                            currentIndex--;
+                                            setState(() {});
                                           },
                                   ),
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Text(currentHijriDay.toString(),
+                                      Text(
+                                          hijriDateOfTheMonth[currentIndex].day,
                                           style: GoogleFonts.qahiri(
                                               textStyle: Theme.of(context)
                                                   .textTheme
@@ -259,14 +241,18 @@ class _HomePageState extends State<HomePage> {
                                       const SizedBox(
                                         width: 20,
                                       ),
-                                      Text(currentHijriMonth.toString(),
+                                      Text(
+                                          hijriDateOfTheMonth[currentIndex]
+                                              .arabicMonth,
                                           style: Theme.of(context)
                                               .textTheme
                                               .headlineMedium!),
                                       const SizedBox(
                                         width: 20,
                                       ),
-                                      Text(currentHijriYear.toString(),
+                                      Text(
+                                          hijriDateOfTheMonth[currentIndex]
+                                              .year,
                                           style: GoogleFonts.qahiri(
                                               textStyle: Theme.of(context)
                                                   .textTheme
@@ -276,8 +262,8 @@ class _HomePageState extends State<HomePage> {
                                   IconButton(
                                     icon: Icon(
                                       Icons.arrow_circle_left_rounded,
-                                      color: _currentDate.day ==
-                                              lastDayOfThisMonth.day
+                                      color: currentIndex ==
+                                              hijriDateOfTheMonth.length - 1
                                           ? Theme.of(context)
                                               .colorScheme
                                               .outline
@@ -285,14 +271,12 @@ class _HomePageState extends State<HomePage> {
                                               .colorScheme
                                               .onSecondaryContainer,
                                     ),
-                                    onPressed: _currentDate.day ==
-                                            lastDayOfThisMonth.day
+                                    onPressed: currentIndex ==
+                                            hijriDateOfTheMonth.length - 1
                                         ? null
                                         : () {
-                                            setState(() {
-                                              _currentDate = _currentDate
-                                                  .add(const Duration(days: 1));
-                                            });
+                                            currentIndex++;
+                                            setState(() {});
                                           },
                                   ),
                                 ],
@@ -334,15 +318,7 @@ class _HomePageState extends State<HomePage> {
                                                           .tertiary),
                                             ),
                                             // R E M A I N I N G -  T O -  A T H A N
-                                            // Text(
-                                            //   "$difference",
-                                            //   style: GoogleFonts.qahiri(
-                                            //       textStyle: Theme.of(context)
-                                            //           .textTheme
-                                            //           .displaySmall!),
-                                            // )
-                                            MyTimer(
-                                                difference: nextPrayerDuration)
+                                            MyTimer(difference: difference)
                                           ],
                                         ),
                                       ),
@@ -356,124 +332,114 @@ class _HomePageState extends State<HomePage> {
                               height: 40,
                             ),
                             // P R A Y E R - T I M E - B O A R D
-                            Container(
-                                padding: const EdgeInsets.all(20),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(30),
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .surfaceVariant,
-                                ),
-                                child: Column(
-                                  children: [
-                                    Text(
-                                      "مواقيت الصلاة",
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .headlineSmall!
-                                          .copyWith(
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .primary),
-                                      textAlign: TextAlign.right,
-                                    ),
-                                    const SizedBox(
-                                      height: 10,
-                                    ),
-                                    Column(
-                                      children:
-                                          todaysTimings.entries.map((entry) {
-                                        final timingName = entry.key;
-                                        final timingValue = entry.value;
-
-                                        if (desiredTimingNames
-                                            .contains(timingName)) {
-                                          return Column(
+                            CarouselSlider(
+                                items: prayerTimingsOfTheMonth.map((prayer) {
+                                  return Builder(
+                                    builder: (BuildContext context) {
+                                      return Container(
+                                          padding: const EdgeInsets.all(20),
+                                          decoration: BoxDecoration(
+                                            borderRadius:
+                                                BorderRadius.circular(30),
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .surfaceVariant,
+                                          ),
+                                          child: Column(
                                             children: [
                                               Row(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.center,
                                                 mainAxisAlignment:
-                                                    MainAxisAlignment
-                                                        .spaceBetween,
+                                                    MainAxisAlignment.center,
                                                 children: [
-                                                  Row(
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .center,
-                                                    children: [
-                                                      // P R A Y E R - I C O N
-                                                      getIcon(timingName),
-
-                                                      // S P A C E
-                                                      const SizedBox(
-                                                        width: 10,
-                                                      ),
-                                                      // P R A Y E R -  N A M E
-                                                      nextPrayerName ==
-                                                              timingName
-                                                          ? Text(
-                                                              formatPrayerName(
-                                                                  timingName),
-                                                              style: TextStyle(
-                                                                  fontSize: 20,
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .bold,
-                                                                  color: Theme.of(
-                                                                          context)
-                                                                      .colorScheme
-                                                                      .primary),
-                                                            )
-                                                          : Text(
-                                                              formatPrayerName(
-                                                                  timingName),
-                                                              style:
-                                                                  const TextStyle(
-                                                                      fontSize:
-                                                                          20),
-                                                            ),
-                                                    ],
-                                                  ),
-                                                  // P R A Y E R - T I M E
-                                                  nextPrayerName == timingName
-                                                      ? Text(
-                                                          timingValue
-                                                              .toString()
-                                                              .substring(0, 5),
-                                                          style: GoogleFonts
-                                                              .qahiri(
-                                                                  textStyle:
-                                                                      TextStyle(
+                                                  Text(
+                                                    "مواقيت الصلاة",
+                                                    style: Theme.of(context)
+                                                        .textTheme
+                                                        .headlineSmall!
+                                                        .copyWith(
                                                             color: Theme.of(
                                                                     context)
                                                                 .colorScheme
-                                                                .primary,
-                                                            fontSize: 30,
-                                                          )),
-                                                        )
-                                                      : Text(
-                                                          timingValue
-                                                              .toString()
-                                                              .substring(0, 5),
-                                                          style: GoogleFonts
-                                                              .qahiri(
-                                                                  textStyle:
-                                                                      const TextStyle(
-                                                            fontSize: 30,
-                                                          )),
-                                                        ),
+                                                                .primary),
+                                                  ),
                                                 ],
                                               ),
+                                              const SizedBox(
+                                                height: 7,
+                                              ),
+                                              Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.center,
+                                                children: [
+                                                  const Icon(
+                                                      size: 20,
+                                                      Icons.location_pin),
+                                                  const SizedBox(
+                                                    width: 6,
+                                                  ),
+                                                  Text(
+                                                    locationName.toString(),
+                                                    style: const TextStyle(
+                                                        fontSize: 18),
+                                                  )
+                                                ],
+                                              ),
+                                              const SizedBox(
+                                                height: 10,
+                                              ),
+                                              Column(
+                                                children: [
+                                                  BoardItem(
+                                                    prayerName: 'الفجر',
+                                                    prayerTime: prayer.fajr,
+                                                    nextPrayerName:
+                                                        nextPrayerName,
+                                                  ),
+                                                  BoardItem(
+                                                    prayerName: 'الظهر',
+                                                    prayerTime: prayer.dhuhr,
+                                                    nextPrayerName:
+                                                        nextPrayerName,
+                                                  ),
+                                                  BoardItem(
+                                                    prayerName: 'العصر',
+                                                    prayerTime: prayer.asr,
+                                                    nextPrayerName:
+                                                        nextPrayerName,
+                                                  ),
+                                                  BoardItem(
+                                                    prayerName: 'المغرب',
+                                                    prayerTime: prayer.maghrib,
+                                                    nextPrayerName:
+                                                        nextPrayerName,
+                                                  ),
+                                                  BoardItem(
+                                                    prayerName: 'العشاء',
+                                                    prayerTime: prayer.isha,
+                                                    nextPrayerName:
+                                                        nextPrayerName,
+                                                  ),
+                                                ],
+                                              )
                                             ],
-                                          );
-                                        }
-                                        return const SizedBox
-                                            .shrink(); // or return an empty container
-                                      }).toList(),
-                                    )
-                                  ],
-                                )),
+                                          ));
+                                    },
+                                  );
+                                }).toList(),
+                                options: CarouselOptions(
+                                  height: 360,
+                                  aspectRatio: 16 / 9,
+                                  viewportFraction: 0.98,
+                                  initialPage: currentIndex,
+                                  enableInfiniteScroll: false,
+                                  reverse: false,
+                                  autoPlay: false,
+                                  enlargeCenterPage: true,
+                                  enlargeFactor: 0.2,
+                                  scrollDirection: Axis.horizontal,
+                                ))
                           ],
                         );
                       } else {
@@ -486,5 +452,73 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+  }
+}
+
+class BoardItem extends StatelessWidget {
+  final String prayerName;
+  final String prayerTime;
+  final String nextPrayerName;
+
+  const BoardItem(
+      {super.key,
+      required this.prayerTime,
+      required this.prayerName,
+      required this.nextPrayerName});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Row(
+          children: [
+            getIcon(prayerName),
+            const SizedBox(
+              width: 10,
+            ),
+            Text(
+              prayerName,
+              style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: prayerName == nextPrayerName
+                      ? FontWeight.bold
+                      : FontWeight.normal,
+                  color: prayerName == nextPrayerName
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.inverseSurface),
+            ),
+          ],
+        ),
+        Text(
+          prayerTime.substring(0, 5),
+          style: GoogleFonts.qahiri(
+            textStyle: TextStyle(
+                fontSize: 30,
+                color: prayerName == nextPrayerName
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.inverseSurface),
+          ),
+        )
+      ],
+    );
+  }
+}
+
+Icon getIcon(prayerName) {
+  if (prayerName == 'الفجر') {
+    return const Icon(
+      CupertinoIcons.moon_stars,
+    );
+  } else if (prayerName == 'الظهر') {
+    return const Icon(CupertinoIcons.sun_max_fill);
+  } else if (prayerName == 'العصر') {
+    return const Icon(CupertinoIcons.sun_min);
+  } else if (prayerName == 'المغرب') {
+    return const Icon(Icons.sunny_snowing);
+  } else if (prayerName == 'العشاء') {
+    return const Icon(CupertinoIcons.moon);
+  } else {
+    return const Icon(Icons.error);
   }
 }

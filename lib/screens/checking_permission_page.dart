@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+// TODO : maybe i will use it in the future
+
 class CheckingPermissionPage extends StatefulWidget {
   const CheckingPermissionPage({super.key});
 
