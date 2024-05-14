@@ -1,3 +1,5 @@
+import 'dart:developer';
+
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
@@ -23,25 +25,25 @@ class LocalNotificationService {
   }
 
   //basic Notification
-  static void showBasicNotification() async {
-    AndroidNotificationDetails android = const AndroidNotificationDetails(
-      'id 1',
-      'basic notification',
-      importance: Importance.max,
-      priority: Priority.high,
-    );
+  // static void showBasicNotification() async {
+  //   AndroidNotificationDetails android = const AndroidNotificationDetails(
+  //     'id 1',
+  //     'basic notification',
+  //     importance: Importance.max,
+  //     priority: Priority.high,
+  //   );
 
-    NotificationDetails details = NotificationDetails(
-      android: android,
-    );
-    await flutterLocalNotificationsPlugin.show(
-      0,
-      'Baisc Notification',
-      'body',
-      details,
-      payload: "Payload Data",
-    );
-  }
+  //   NotificationDetails details = NotificationDetails(
+  //     android: android,
+  //   );
+  //   await flutterLocalNotificationsPlugin.show(
+  //     0,
+  //     'Baisc Notification',
+  //     'body',
+  //     details,
+  //     payload: "Payload Data",
+  //   );
+  // }
 
   //showSchduledNotification
   static void showSchduledNotification(int year, int month, int day, int hour,

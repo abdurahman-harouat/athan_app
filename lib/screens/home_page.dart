@@ -42,7 +42,7 @@ class _HomePageState extends State<HomePage> {
             _currentDate.day,
             (isFriday && nextPrayerName == "الظهر")
                 ? jumuaaPrayerReminder.hour
-                : jumuaaPrayerReminder.hour,
+                : prayerReminderTime.hour,
             (isFriday && nextPrayerName == "الظهر")
                 ? jumuaaPrayerReminder.minute
                 : prayerReminderTime.minute,
@@ -133,7 +133,7 @@ class _HomePageState extends State<HomePage> {
       isFriday = hijriDateOfTheMonth[currentIndex].arabicWeekDay == "الجمعة";
 
       if (currentTime.isBefore(fajrTime)) {
-        nextPrayerName = 'فجر';
+        nextPrayerName = 'الفجر';
         difference = fajrTime.difference(currentTime);
         prayerReminderTime = fajrTime.subtract(const Duration(minutes: 10));
         nextPrayerTime = fajrTime;
@@ -172,7 +172,9 @@ class _HomePageState extends State<HomePage> {
             tomorrowFajrTime.subtract(const Duration(minutes: 10));
         nextPrayerTime = tomorrowFajrTime;
       }
+      scheduledNotification();
     }
+    print("prayer reminder time $prayerReminderTime");
     throw Error();
   }
 
