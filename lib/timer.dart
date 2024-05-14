@@ -31,7 +31,7 @@ class _MyTimerState extends State<MyTimer> {
         // Check if the remaining time is 0
         if (remaining <= Duration.zero) {
           // Delay the update of endTime by one second
-          Future.delayed(const Duration(seconds: 1), () {
+          Future.delayed(const Duration(seconds: 0), () {
             if (mounted) {
               // Check if the widget is still in the tree
               setState(() {

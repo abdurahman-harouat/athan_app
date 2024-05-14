@@ -34,20 +34,17 @@ class _HomePageState extends State<HomePage> {
         ?.requestNotificationsPermission();
 
     if (grantedNotificationPermission != null) {
-      if (nextPrayerTime.isAfter(prayerReminderTime) ||
-          nextPrayerTime.isAfter(jumuaaPrayerReminder)) {
-        LocalNotificationService.showSchduledNotification(
-            _currentDate.year,
-            _currentDate.month,
-            _currentDate.day,
-            (isFriday && nextPrayerName == "الظهر")
-                ? jumuaaPrayerReminder.hour
-                : prayerReminderTime.hour,
-            (isFriday && nextPrayerName == "الظهر")
-                ? jumuaaPrayerReminder.minute
-                : prayerReminderTime.minute,
-            nextPrayerName);
-      }
+      LocalNotificationService.showSchduledNotification(
+          _currentDate.year,
+          _currentDate.month,
+          _currentDate.day,
+          (isFriday && nextPrayerName == "الظهر")
+              ? jumuaaPrayerReminder.hour
+              : prayerReminderTime.hour,
+          (isFriday && nextPrayerName == "الظهر")
+              ? jumuaaPrayerReminder.minute
+              : prayerReminderTime.minute,
+          nextPrayerName);
     }
   }
 
