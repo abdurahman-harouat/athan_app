@@ -1,8 +1,10 @@
 import 'package:athan_app_v2/local_notification_service.dart';
+import 'package:athan_app_v2/models/data_model.dart';
 import 'package:athan_app_v2/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:provider/provider.dart';
 
 import 'screens/home_page.dart';
 
@@ -12,7 +14,10 @@ void main() async {
   var box = await Hive.openBox('athan_box');
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   await LocalNotificationService.init();
-  runApp(const MainApp());
+  runApp(ChangeNotifierProvider(
+    create: (context) => DataModel(),
+    child: const MainApp(),
+  ));
 }
 
 class MainApp extends StatelessWidget {
