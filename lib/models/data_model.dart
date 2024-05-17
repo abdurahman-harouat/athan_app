@@ -1,10 +1,10 @@
+import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:convert';
-
 import 'package:athan_app_v2/models/hijri_date_model.dart';
 import 'package:athan_app_v2/models/timings_model.dart';
 import 'package:athan_app_v2/utils/current_time.dart';
-import 'package:athan_app_v2/utils/formatCurrentDate.dart';
+import 'package:athan_app_v2/utils/format_date.dart';
 import 'package:athan_app_v2/utils/location.dart';
 import 'package:athan_app_v2/local_notification_service.dart';
 import 'package:geocoding/geocoding.dart';
@@ -14,29 +14,57 @@ import 'package:geolocator/geolocator.dart';
 import 'package:flutter/material.dart';
 
 class DataModel extends ChangeNotifier {
-  final athan_box = Hive.box('athan_box');
+  final athanBox = Hive.box('athan_box');
 
   // Declare variables
   late DateTime nextPrayerTime;
-  late String nextPrayerName;
-  late DateTime prayerReminderTime;
-  late DateTime jumuaaPrayerReminder;
-  bool isFriday = false;
+  late String _nextPrayerName;
+  late DateTime _prayerReminderTime;
+  late DateTime _jumuaaPrayerReminder;
+  bool _isFriday = false;
   final DateTime _currentDate = DateTime.now();
-  String formattedCurrentDate = formatDateReverse(DateTime.now());
-  String formattedTommorowDate =
+  final String _formattedCurrentDate = formatDateReverse(DateTime.now());
+  final String _formattedTommorowDate =
       formatDateReverse(DateTime.now().add(const Duration(days: 1)));
-  late Duration difference;
-  List<TimingsModel> prayerTimingsOfTheMonth = [];
-  List<HijriDateModel> hijriDateOfTheMonth = [];
-  int currentIndex = DateTime.now().day - 1;
-  late double latitude;
-  late double longitude;
-  late String? locationName;
+  late Duration _difference;
+  final List<TimingsModel> _prayerTimingsOfTheMonth = [];
+  final List<HijriDateModel> _hijriDateOfTheMonth = [];
+  int _currentIndex = DateTime.now().day - 1;
+  late double _latitude;
+  late double _longitude;
+  late String? _locationName;
+
+  // getters
+  Duration get difference => _difference;
+  get currentIndex => _currentIndex;
+  get locationName => _locationName;
+  get nextPrayerName => _nextPrayerName;
+  List get prayerTimingsOfTheMonth => _prayerTimingsOfTheMonth;
+  get hijriDateOfTheMonth => _hijriDateOfTheMonth;
+
+  void decreaseIndex() {
+    _currentIndex--;
+    notifyListeners();
+  }
+
+  void increaseIndex() {
+    _currentIndex++;
+    notifyListeners();
+  }
+
+  void calculateNextPrayerTime() {
+    DateTime oldNextPrayerTime = nextPrayerTime;
+    _calculateNextPrayerTime();
+
+    // Only notify listeners if the next prayer time has changed
+    if (nextPrayerTime != oldNextPrayerTime) {
+      notifyListeners();
+    }
+  }
 
   // Initialize data
   Future<void> initializeData() async {
-    var storage = athan_box.get('athan_data');
+    var storage = athanBox.get('athan_data');
     if (storage == null || storage.isEmpty) {
       await _getLocation();
       await _storeLocationData();
@@ -51,24 +79,24 @@ class DataModel extends ChangeNotifier {
   // Get user's location
   Future<void> _getLocation() async {
     Position position = await UsersLocation.determineLocation();
-    latitude = position.latitude;
-    longitude = position.longitude;
+    _latitude = position.latitude;
+    _longitude = position.longitude;
   }
 
   // Store location data
   Future<void> _storeLocationData() async {
     setLocaleIdentifier("ar_DZ");
     List<Placemark> placemarks =
-        await placemarkFromCoordinates(latitude, longitude);
-    locationName = placemarks[0].locality;
-    athan_box.put('athan_data', [latitude, longitude, locationName]);
+        await placemarkFromCoordinates(_latitude, _longitude);
+    _locationName = placemarks[0].locality;
+    athanBox.put('athan_data', [_latitude, _longitude, _locationName]);
   }
 
   // Load stored location data
   void _loadStoredLocationData(List storage) {
-    latitude = storage[0];
-    longitude = storage[1];
-    locationName = storage[2];
+    _latitude = storage[0];
+    _longitude = storage[1];
+    _locationName = storage[2];
   }
 
   // Fetch prayer times from API
@@ -76,7 +104,7 @@ class DataModel extends ChangeNotifier {
     var response = await http.get(Uri.https(
       'api.aladhan.com',
       '/v1/calendar/${_currentDate.year}/${_currentDate.month}',
-      {'latitude': '$latitude', 'longitude': '$longitude'},
+      {'latitude': '$_latitude', 'longitude': '$_longitude'},
     ));
 
     if (response.statusCode == 200) {
@@ -91,15 +119,23 @@ class DataModel extends ChangeNotifier {
   void _populatePrayerTimings(List<dynamic> data) {
     for (var item in data) {
       var timings = item['timings'];
-      prayerTimingsOfTheMonth.add(TimingsModel.fromJson(timings));
+      _prayerTimingsOfTheMonth.add(TimingsModel.fromJson(timings));
 
       var hijri = item['date']['hijri'];
-      hijriDateOfTheMonth.add(HijriDateModel.fromJson(hijri));
+      _hijriDateOfTheMonth.add(HijriDateModel.fromJson(hijri));
     }
   }
 
   // Calculate next prayer time and related data
   void _calculateNextPrayerTime() {
+    // TEST DATA
+    // DateTime fajrTime = DateTime(2024, 5, 17, 23, 56);
+    // DateTime dhuhrTime = DateTime(2024, 5, 17, 23, 56, 30);
+    // DateTime asrTime = DateTime(2024, 5, 17, 23, 56, 40);
+    // DateTime maghribTime = DateTime(2024, 5, 17, 23, 57);
+    // DateTime ishaTime = DateTime(2024, 5, 17, 22, 23, 57, 30);
+    // DateTime tomorrowFajrTime = DateTime(2024, 5, 17, 23, 57, 40);
+
     DateTime fajrTime =
         _getPrayerTime(prayerTimingsOfTheMonth[currentIndex].fajr, 'fajr');
     DateTime dhuhrTime =
@@ -113,27 +149,27 @@ class DataModel extends ChangeNotifier {
     DateTime tomorrowFajrTime = _getPrayerTime(
         prayerTimingsOfTheMonth[currentIndex + 1].fajr, 'fajr', true);
 
-    isFriday = hijriDateOfTheMonth[currentIndex].arabicWeekDay == "الجمعة";
+    _isFriday = _hijriDateOfTheMonth[_currentIndex].arabicWeekDay == "الجمعة";
 
     if (currentTime.isBefore(fajrTime)) {
       _setNextPrayerData(
           'الفجر', fajrTime, fajrTime.subtract(const Duration(minutes: 10)));
-    } else if (currentTime.isAfter(fajrTime) &&
+    } else if ((currentTime.isAfter(fajrTime)) &&
         currentTime.isBefore(dhuhrTime)) {
       _setNextPrayerData(
           'الظهر', dhuhrTime, dhuhrTime.subtract(const Duration(minutes: 5)));
-      if (isFriday) {
-        jumuaaPrayerReminder = dhuhrTime.subtract(const Duration(minutes: 30));
+      if (_isFriday) {
+        _jumuaaPrayerReminder = dhuhrTime.subtract(const Duration(minutes: 30));
       }
-    } else if (currentTime.isAfter(dhuhrTime) &&
+    } else if ((currentTime.isAfter(dhuhrTime)) &&
         currentTime.isBefore(asrTime)) {
       _setNextPrayerData(
           'العصر', asrTime, asrTime.subtract(const Duration(minutes: 5)));
-    } else if (currentTime.isAfter(asrTime) &&
+    } else if ((currentTime.isAfter(asrTime)) &&
         currentTime.isBefore(maghribTime)) {
       _setNextPrayerData('المغرب', maghribTime,
           maghribTime.subtract(const Duration(minutes: 10)));
-    } else if (currentTime.isAfter(maghribTime) &&
+    } else if ((currentTime.isAfter(maghribTime)) &&
         currentTime.isBefore(ishaTime)) {
       _setNextPrayerData(
           'العشاء', ishaTime, ishaTime.subtract(const Duration(minutes: 5)));
@@ -145,17 +181,17 @@ class DataModel extends ChangeNotifier {
 
   // Set next prayer data
   void _setNextPrayerData(String name, DateTime time, DateTime reminder) {
-    nextPrayerName = name;
+    _nextPrayerName = name;
     nextPrayerTime = time;
-    prayerReminderTime = reminder;
-    difference = time.difference(currentTime);
+    _prayerReminderTime = reminder;
+    _difference = time.difference(currentTime);
   }
 
   // Get prayer time from string
   DateTime _getPrayerTime(String timeStr, String name,
       [bool isTomorrow = false]) {
     return DateTime.parse(
-      "${isTomorrow ? formattedTommorowDate : formattedCurrentDate} ${timeStr.substring(0, 5)}:00",
+      "${isTomorrow ? _formattedTommorowDate : _formattedCurrentDate} ${timeStr.substring(0, 5)}:00",
     );
   }
 
@@ -170,20 +206,25 @@ class DataModel extends ChangeNotifier {
         _currentDate.year,
         _currentDate.month,
         _currentDate.day,
-        (isFriday && nextPrayerName == "الظهر")
-            ? jumuaaPrayerReminder.hour
-            : prayerReminderTime.hour,
-        (isFriday && nextPrayerName == "الظهر")
-            ? jumuaaPrayerReminder.minute
-            : prayerReminderTime.minute,
-        nextPrayerName,
+        (_isFriday && _nextPrayerName == "الظهر")
+            ? _jumuaaPrayerReminder.hour
+            : _prayerReminderTime.hour,
+        (_isFriday && _nextPrayerName == "الظهر")
+            ? _jumuaaPrayerReminder.minute
+            : _prayerReminderTime.minute,
+        _nextPrayerName,
       );
     }
   }
 
+  void updateCurrentTime() {
+    currentTime = DateTime.now();
+    notifyListeners();
+  }
+
   // Handle refresh
   Future<void> handleRefresh() async {
-    currentIndex = DateTime.now().day - 1;
+    _currentIndex = DateTime.now().day - 1;
     notifyListeners();
   }
 }
