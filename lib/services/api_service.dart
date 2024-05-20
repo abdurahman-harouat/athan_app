@@ -1,4 +1,4 @@
-import 'package:athan_app_v2/utils/location.dart';
+import 'package:athan_app/utils/location.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 

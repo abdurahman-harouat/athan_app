@@ -1,12 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'package:athan_app_v2/models/hijri_date_model.dart';
-import 'package:athan_app_v2/models/timings_model.dart';
-import 'package:athan_app_v2/utils/current_time.dart';
-import 'package:athan_app_v2/utils/format_date.dart';
-import 'package:athan_app_v2/utils/location.dart';
-import 'package:athan_app_v2/local_notification_service.dart';
+import 'package:athan_app/models/hijri_date_model.dart';
+import 'package:athan_app/models/timings_model.dart';
+import 'package:athan_app/utils/current_time.dart';
+import 'package:athan_app/utils/format_date.dart';
+import 'package:athan_app/utils/location.dart';
+import 'package:athan_app/local_notification_service.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;

@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:athan_app_v2/screens/home_page.dart';
-import 'package:athan_app_v2/screens/no_network_page.dart';
+import 'package:athan_app/screens/home_page.dart';
+import 'package:athan_app/screens/no_network_page.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 

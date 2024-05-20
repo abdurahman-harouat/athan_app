@@ -1,6 +1,6 @@
-import 'package:athan_app_v2/components/remaining.dart';
-import 'package:athan_app_v2/models/data_model.dart';
-import 'package:athan_app_v2/screens/loading.dart';
+import 'package:athan_app/components/remaining.dart';
+import 'package:athan_app/models/data_model.dart';
+import 'package:athan_app/screens/loading.dart';
 
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:flutter/cupertino.dart';
@@ -193,7 +193,7 @@ class _HomePageState extends State<HomePage> {
                                                     BorderRadius.circular(30),
                                                 color: Theme.of(context)
                                                     .colorScheme
-                                                    .surfaceVariant,
+                                                    .surfaceContainerHighest,
                                               ),
                                               child: Column(
                                                 children: [

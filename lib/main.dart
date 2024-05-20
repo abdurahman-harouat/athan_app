@@ -1,7 +1,7 @@
-import 'package:athan_app_v2/components/connectivity_wrapper.dart';
-import 'package:athan_app_v2/local_notification_service.dart';
-import 'package:athan_app_v2/models/data_model.dart';
-import 'package:athan_app_v2/theme.dart';
+import 'package:athan_app/components/connectivity_wrapper.dart';
+import 'package:athan_app/local_notification_service.dart';
+import 'package:athan_app/models/data_model.dart';
+import 'package:athan_app/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
