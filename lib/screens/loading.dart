@@ -25,7 +25,7 @@ class LoadingHomePage extends StatelessWidget {
                   child: Shimmer.fromColors(
                     baseColor: Theme.of(context).colorScheme.surface,
                     highlightColor:
-                        Theme.of(context).colorScheme.surfaceVariant,
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
                     child: Container(
                       height: 100.0,
                       width: 30.0,
@@ -93,8 +93,9 @@ class LoadingHomePage extends StatelessWidget {
                             width: 85.0,
                             height: 29.0,
                             child: Shimmer.fromColors(
-                              baseColor:
-                                  Theme.of(context).colorScheme.surfaceVariant,
+                              baseColor: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
                               highlightColor:
                                   Theme.of(context).colorScheme.surface,
                               child: Container(

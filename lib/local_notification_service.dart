@@ -12,9 +12,16 @@ class LocalNotificationService {
           AndroidFlutterLocalNotificationsPlugin>();
 
   static onTap(NotificationResponse notificationResponse) {}
+
   static Future init() async {
-    InitializationSettings settings = const InitializationSettings(
-        android: AndroidInitializationSettings("@mipmap/launcher_icon"));
+    InitializationSettings settings = InitializationSettings(
+        android: const AndroidInitializationSettings("@mipmap/launcher_icon"),
+        iOS: DarwinInitializationSettings(
+            requestAlertPermission: true,
+            requestBadgePermission: true,
+            requestSoundPermission: true,
+            onDidReceiveLocalNotification: (int id, String? title, String? body,
+                String? payload) async {}));
     flutterLocalNotificationsPlugin.initialize(
       settings,
       onDidReceiveNotificationResponse: onTap,
@@ -52,8 +59,7 @@ class LocalNotificationService {
         priority: Priority.high,
         sound: RawResourceAndroidNotificationSound('notification'));
     NotificationDetails details = NotificationDetails(
-      android: android,
-    );
+        android: android, iOS: const DarwinNotificationDetails());
     tz.initializeTimeZones();
     // log(tz.local.name);
     // log("Before ${tz.TZDateTime.now(tz.local).hour}");
