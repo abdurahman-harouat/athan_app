@@ -35,4 +35,10 @@ Athan app that displays prayer times for an entire month according to your geogr
 - [ ] adding multi-languge support
 - [ ] adding tasks to work manager
 
+## App images
+
+<div><img src="https://raw.githubusercontent.com/abdurahman-harouat/athan_app/main/showcase/light.png" height=400px>
+<img src="https://raw.githubusercontent.com/abdurahman-harouat/athan_app/main/showcase/dark.png" height=400px>
+</div>
+
 > development started 28 Apr 2024
