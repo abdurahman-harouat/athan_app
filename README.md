@@ -17,7 +17,7 @@ Athan app that displays prayer times for an entire month according to your geogr
 - [x] remaining time before athan
 - [x] location saved on device
 
-### notificaton
+### notification
 
 - 10 minutes before fajr
 - 5 minutes before dhuhr
