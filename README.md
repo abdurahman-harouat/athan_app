@@ -2,7 +2,7 @@
 
 ## introduction
 
-Athan app that displays prayer times for an entire month according to your geographical location based on GPS, in addition to a notification you will get before athan at a specific time.
+Athan app that displays prayer times for the current month and the next month according to your geographical location based on GPS, in addition to a notification you will get before athan at a specific time.
 
 [API](https://aladhan.com/prayer-times-api)
 

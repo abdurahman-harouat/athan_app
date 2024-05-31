@@ -107,17 +107,31 @@ class DataModel extends ChangeNotifier {
       {'latitude': '$_latitude', 'longitude': '$_longitude'},
     ));
 
-    if (response.statusCode == 200) {
+    var response2 = await http.get(Uri.https(
+      'api.aladhan.com',
+      '/v1/calendar/${_currentDate.year}/${_currentDate.month + 1}',
+      {'latitude': '$_latitude', 'longitude': '$_longitude'},
+    ));
+
+    if (response.statusCode == 200 && response2.statusCode == 200) {
       var jsonData = jsonDecode(response.body);
-      _populatePrayerTimings(jsonData['data']);
+      var jsonData2 = jsonDecode(response2.body);
+      _populatePrayerTimings(jsonData['data'], jsonData2['data']);
     } else {
       throw Error();
     }
   }
 
   // Populate prayer timings and hijri dates
-  void _populatePrayerTimings(List<dynamic> data) {
+  void _populatePrayerTimings(List<dynamic> data, List<dynamic> data2) {
     for (var item in data) {
+      var timings = item['timings'];
+      _prayerTimingsOfTheMonth.add(TimingsModel.fromJson(timings));
+
+      var hijri = item['date']['hijri'];
+      _hijriDateOfTheMonth.add(HijriDateModel.fromJson(hijri));
+    }
+    for (var item in data2) {
       var timings = item['timings'];
       _prayerTimingsOfTheMonth.add(TimingsModel.fromJson(timings));
 

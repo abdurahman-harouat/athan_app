@@ -29,6 +29,7 @@ class MainApp extends StatelessWidget {
       theme: const MaterialTheme(TextTheme()).light(),
       darkTheme: const MaterialTheme(TextTheme()).dark(),
       home: const ConnectivityWrapper(),
+      // home: const PrintingPage(),
     );
   }
 }
