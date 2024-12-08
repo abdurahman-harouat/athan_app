@@ -42,3 +42,18 @@ Athan app that displays prayer times for the current month and the next month ac
 </div>
 
 > development started 28 Apr 2024
+
+## my environment
+
+```bash
+java -version
+# openjdk version "23.0.1" 2024-10-15
+# OpenJDK Runtime Environment Homebrew (build 23.0.1)
+# OpenJDK 64-Bit Server VM Homebrew (build 23.0.1, mixed mode, sharing)
+```
+
+**build the app for android**
+
+```bash
+flutter build apk --split-per-abi
+```

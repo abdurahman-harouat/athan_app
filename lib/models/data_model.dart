@@ -99,17 +99,23 @@ class DataModel extends ChangeNotifier {
     _locationName = storage[2];
   }
 
-  // Fetch prayer times from API
   Future<void> _fetchPrayerTimes() async {
+    int currentMonth = _currentDate.month;
+    int currentYear = _currentDate.year;
+
+    // Calculate next month and year
+    int nextMonth = currentMonth == 12 ? 1 : currentMonth + 1;
+    int nextYear = currentMonth == 12 ? currentYear + 1 : currentYear;
+
     var response = await http.get(Uri.https(
       'api.aladhan.com',
-      '/v1/calendar/${_currentDate.year}/${_currentDate.month}',
+      '/v1/calendar/$currentYear/$currentMonth',
       {'latitude': '$_latitude', 'longitude': '$_longitude'},
     ));
 
     var response2 = await http.get(Uri.https(
       'api.aladhan.com',
-      '/v1/calendar/${_currentDate.year}/${_currentDate.month + 1}',
+      '/v1/calendar/$nextYear/$nextMonth',
       {'latitude': '$_latitude', 'longitude': '$_longitude'},
     ));
 
@@ -217,16 +223,16 @@ class DataModel extends ChangeNotifier {
 
     if (grantedNotificationPermission != null) {
       LocalNotificationService.showSchduledNotification(
-        _currentDate.year,
-        _currentDate.month,
-        _currentDate.day,
-        (_isFriday && _nextPrayerName == "الظهر")
+        year: _currentDate.year,
+        month: _currentDate.month,
+        day: _currentDate.day,
+        hour: (_isFriday && _nextPrayerName == "الظهر")
             ? _jumuaaPrayerReminder.hour
             : _prayerReminderTime.hour,
-        (_isFriday && _nextPrayerName == "الظهر")
+        minute: (_isFriday && _nextPrayerName == "الظهر")
             ? _jumuaaPrayerReminder.minute
             : _prayerReminderTime.minute,
-        _nextPrayerName,
+        nextPrayerName: _nextPrayerName,
       );
     }
   }

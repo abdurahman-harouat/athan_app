@@ -11,7 +11,18 @@ class LocalNotificationService {
       flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
 
-  static onTap(NotificationResponse notificationResponse) {}
+  // Unique ID for each prayer to ensure multiple notifications
+  static const Map<String, int> prayerNotificationIds = {
+    'Fajr': 1,
+    'Dhuhr': 2,
+    'Asr': 3,
+    'Maghrib': 4,
+    'Isha': 5
+  };
+
+  static onTap(NotificationResponse notificationResponse) {
+    // Optional: Add any specific action when notification is tapped
+  }
 
   static Future init() async {
     InitializationSettings settings = InitializationSettings(
@@ -22,57 +33,58 @@ class LocalNotificationService {
             requestSoundPermission: true,
             onDidReceiveLocalNotification: (int id, String? title, String? body,
                 String? payload) async {}));
-    flutterLocalNotificationsPlugin.initialize(
+
+    await flutterLocalNotificationsPlugin.initialize(
       settings,
       onDidReceiveNotificationResponse: onTap,
       onDidReceiveBackgroundNotificationResponse: onTap,
     );
+
+    // Request notification permissions on Android 13+
+    if (androidImplementation != null) {
+      await androidImplementation!.requestNotificationsPermission();
+    }
   }
 
-  //basic Notification
-  // static void showBasicNotification() async {
-  //   AndroidNotificationDetails android = const AndroidNotificationDetails(
-  //     'id 1',
-  //     'basic notification',
-  //     importance: Importance.max,
-  //     priority: Priority.high,
-  //   );
+  // Enhanced scheduled notification method
+  static void showSchduledNotification(
+      {required int year,
+      required int month,
+      required int day,
+      required int hour,
+      required int minute,
+      required String nextPrayerName}) async {
+    // Create unique notification ID based on prayer name
+    int notificationId = prayerNotificationIds[nextPrayerName] ?? 0;
 
-  //   NotificationDetails details = NotificationDetails(
-  //     android: android,
-  //   );
-  //   await flutterLocalNotificationsPlugin.show(
-  //     0,
-  //     'Baisc Notification',
-  //     'body',
-  //     details,
-  //     payload: "Payload Data",
-  //   );
-  // }
-
-  //showSchduledNotification
-  static void showSchduledNotification(int year, int month, int day, int hour,
-      int minute, String nextPrayerName) async {
+    // Configure Android-specific notification details
     AndroidNotificationDetails android = const AndroidNotificationDetails(
-        'schduled notification', 'id 3',
-        importance: Importance.max,
-        priority: Priority.high,
-        sound: RawResourceAndroidNotificationSound('notification'));
+      'prayer_notifications',
+      'Prayer Time Alerts',
+      importance: Importance.max,
+      priority: Priority.high,
+      sound: RawResourceAndroidNotificationSound('notification'),
+      // Allow multiple notifications to be shown
+      ongoing: false,
+      autoCancel: true,
+    );
+
+    // Create notification details
     NotificationDetails details = NotificationDetails(
         android: android, iOS: const DarwinNotificationDetails());
+
+    // Initialize time zones
     tz.initializeTimeZones();
-    // log(tz.local.name);
-    // log("Before ${tz.TZDateTime.now(tz.local).hour}");
+
+    // Get current device time zone
     final String currentTimeZone = await FlutterTimezone.getLocalTimezone();
-    // log(currentTimeZone);
     tz.setLocalLocation(tz.getLocation(currentTimeZone));
-    // log(tz.local.name);
-    // log("After ${tz.TZDateTime.now(tz.local).hour}");
+
+    // Schedule the notification
     await flutterLocalNotificationsPlugin.zonedSchedule(
-      2,
+      notificationId,
       'يرجى الإستعداد لصلاة $nextPrayerName',
       '',
-      // tz.TZDateTime.now(tz.local).add(const Duration(seconds: 2)),
       tz.TZDateTime(
         tz.local,
         year,
@@ -82,9 +94,22 @@ class LocalNotificationService {
         minute,
       ),
       details,
-      payload: 'zonedSchedule',
+      payload: 'prayer_notification',
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
+      matchDateTimeComponents: DateTimeComponents
+          .time, // This is key for daily recurring notifications
     );
+  }
+
+  // Method to cancel a specific prayer notification if needed
+  static Future<void> cancelPrayerNotification(String prayerName) async {
+    int notificationId = prayerNotificationIds[prayerName] ?? 0;
+    await flutterLocalNotificationsPlugin.cancel(notificationId);
+  }
+
+  // Method to cancel all prayer notifications
+  static Future<void> cancelAllNotifications() async {
+    await flutterLocalNotificationsPlugin.cancelAll();
   }
 }
