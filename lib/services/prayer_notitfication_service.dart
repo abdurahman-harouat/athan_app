@@ -176,22 +176,4 @@ class PrayerNotificationService {
   static Future<List<NotificationModel>> getScheduledNotifications() async {
     return await AwesomeNotifications().listScheduledNotifications();
   }
-
-  static Future<void> testNotification() async {
-    await AwesomeNotifications().createNotification(
-      content: NotificationContent(
-        id: 999,
-        channelKey: 'prayer_notifications',
-        title: '🧪 اختبار الإشعارات',
-        body: 'الإشعارات تعمل بشكل صحيح!',
-        notificationLayout: NotificationLayout.Default,
-        wakeUpScreen: true,
-        icon: 'resource://mipmap/ic_launcher',
-        largeIcon: 'resource://mipmap/ic_launcher',
-      ),
-    );
-    if (kDebugMode) {
-      print('🧪 Test notification sent');
-    }
-  }
 }

@@ -25,8 +25,12 @@ class PrayerService {
       throw Exception('Location permissions are denied');
     }
 
+    // Use a timeout for location to avoid hanging indefinitely
+    // Medium accuracy is usually enough and faster on mobile data
     return await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high);
+      desiredAccuracy: LocationAccuracy.medium,
+      timeLimit: const Duration(seconds: 10),
+    );
   }
 
   Future<List<PrayerDay>> fetchPrayerTimes(int year, int month) async {
@@ -34,15 +38,32 @@ class PrayerService {
       final position = await getCurrentLocation();
       final url =
           '$baseUrl/$year/$month?latitude=${position.latitude}&longitude=${position.longitude}';
-      final response = await http.get(Uri.parse(url));
+      
+      // Retry logic: try 3 times with exponential backoff
+      int attempts = 0;
+      const maxAttempts = 3;
+      
+      while (attempts < maxAttempts) {
+        try {
+          final response = await http
+              .get(Uri.parse(url))
+              .timeout(const Duration(seconds: 15)); // Add timeout
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final List<dynamic> days = data['data'];
-        return days.map((day) => PrayerDay.fromJson(day)).toList();
-      } else {
-        throw Exception('Failed to load prayer times');
+          if (response.statusCode == 200) {
+            final data = json.decode(response.body);
+            final List<dynamic> days = data['data'];
+            return days.map((day) => PrayerDay.fromJson(day)).toList();
+          } else {
+            throw Exception('Failed to load prayer times: ${response.statusCode}');
+          }
+        } catch (e) {
+          attempts++;
+          if (attempts == maxAttempts) rethrow;
+          // Wait before retrying: 1s, 2s, etc.
+          await Future.delayed(Duration(seconds: attempts));
+        }
       }
+      throw Exception('Failed to connect after $maxAttempts attempts');
     } catch (e) {
       throw Exception('Error fetching prayer times: $e');
     }
@@ -63,5 +84,10 @@ class PrayerService {
       return data.map((json) => PrayerDay.fromJson(json)).toList();
     }
     return [];
+  }
+
+  Future<void> clearPrayerTimes(String key) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(key);
   }
 }

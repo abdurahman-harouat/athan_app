@@ -246,110 +246,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showNotificationMenu() {
-    showCupertinoModalPopup(
-      context: context,
-      builder: (context) => CupertinoActionSheet(
-        title: Text('إعدادات الإشعارات'),
-        message: Text('إدارة إشعارات أوقات الصلاة'),
-        actions: [
-          CupertinoActionSheetAction(
-            child: Text('🧪 اختبار الإشعار'),
-            onPressed: () async {
-              Navigator.pop(context);
-              await PrayerNotificationService.testNotification();
-              if (mounted) {
-                showCupertinoDialog(
-                  context: context,
-                  builder: (context) => CupertinoAlertDialog(
-                    title: Text('تم الإرسال'),
-                    content: Text('تم إرسال إشعار تجريبي'),
-                    actions: [
-                      CupertinoDialogAction(
-                        child: Text('حسناً'),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                    ],
-                  ),
-                );
-              }
-            },
-          ),
-          CupertinoActionSheetAction(
-            child: Text('📋 عرض الإشعارات المجدولة'),
-            onPressed: () async {
-              Navigator.pop(context);
-              final scheduled =
-                  await PrayerNotificationService.getScheduledNotifications();
-              if (mounted) {
-                showCupertinoDialog(
-                  context: context,
-                  builder: (context) => CupertinoAlertDialog(
-                    title: Text('الإشعارات المجدولة'),
-                    content: Text(
-                      scheduled.isEmpty
-                          ? 'لا توجد إشعارات مجدولة'
-                          : 'عدد الإشعارات: ${scheduled.length}\n\n${scheduled.map((n) => '${n.content?.title ?? "Unknown"}').join('\n')}',
-                    ),
-                    actions: [
-                      CupertinoDialogAction(
-                        child: Text('حسناً'),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                    ],
-                  ),
-                );
-              }
-            },
-          ),
-          CupertinoActionSheetAction(
-            child: Text('🔄 إعادة جدولة الإشعارات'),
-            onPressed: () async {
-              Navigator.pop(context);
-              if (_prayerDays.isNotEmpty) {
-                final now = DateTime.now();
-                final todayPrayers = _prayerDays.firstWhere(
-                  (day) =>
-                      day.readableDate ==
-                      intl.DateFormat('dd MMM yyyy').format(now),
-                  orElse: () => _prayerDays.first,
-                );
-                await _scheduleTodaysPrayers(todayPrayers);
-              }
-            },
-          ),
-          CupertinoActionSheetAction(
-            isDestructiveAction: true,
-            child: Text('🗑️ إلغاء جميع الإشعارات'),
-            onPressed: () async {
-              Navigator.pop(context);
-              await PrayerNotificationService.cancelAllNotifications();
-              if (mounted) {
-                showCupertinoDialog(
-                  context: context,
-                  builder: (context) => CupertinoAlertDialog(
-                    title: Text('تم الإلغاء'),
-                    content: Text('تم إلغاء جميع الإشعارات'),
-                    actions: [
-                      CupertinoDialogAction(
-                        child: Text('حسناً'),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                    ],
-                  ),
-                );
-              }
-            },
-          ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          child: Text('إلغاء'),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
-    );
-  }
-
   void _showDatePicker() {
     showCupertinoModalPopup(
       context: context,
@@ -395,6 +291,45 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _updateLocation() async {
+    setState(() => _isLoading = true);
+    try {
+      final year = DateTime.now().year;
+      final month = DateTime.now().month;
+      final key = 'prayer_times_${year}_$month';
+
+      await _prayerService.clearPrayerTimes(key);
+
+      if (mounted) {
+        setState(() {
+          _selectedDate = DateTime.now();
+        });
+      }
+
+      await _loadPrayerTimes();
+
+      if (mounted) {
+        showCupertinoDialog(
+          context: context,
+          builder: (context) => CupertinoAlertDialog(
+            title: Text('تم التحديث'),
+            content: Text('تم تحديث الموقع ومواقيت الصلاة'),
+            actions: [
+              CupertinoDialogAction(
+                child: Text('حسناً'),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
@@ -408,14 +343,15 @@ class _HomeScreenState extends State<HomeScreen> {
             'مواقيت الصلاة',
             style: AppTextStyles.headlineSmall(context),
           ),
-          leading: CupertinoButton(
-            padding: EdgeInsets.zero,
-            child: Icon(CupertinoIcons.bell, size: AppIconSizes.lg),
-            onPressed: _showNotificationMenu,
-          ),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              CupertinoButton(
+                padding: EdgeInsets.zero,
+                child: Icon(CupertinoIcons.location_solid, size: AppIconSizes.lg),
+                onPressed: _updateLocation,
+              ),
+              SizedBox(width: AppSpacing.xs),
               CupertinoButton(
                 padding: EdgeInsets.zero,
                 child: Icon(CupertinoIcons.calendar, size: AppIconSizes.lg),
