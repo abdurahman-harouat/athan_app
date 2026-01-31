@@ -1,9 +1,11 @@
 import 'package:athan_app_v2/models/prayer_times.dart';
+import 'package:athan_app_v2/services/location_service.dart';
 import 'package:athan_app_v2/services/prayer_notitfication_service.dart';
 import 'package:athan_app_v2/services/prayer_service.dart';
 import 'package:athan_app_v2/theme.dart';
 import 'package:athan_app_v2/utils/month_translations.dart';
 import 'package:athan_app_v2/utils/prayer_icons.dart';
+import 'package:athan_app_v2/widgets/calendar_strip.dart';
 import 'package:athan_app_v2/widgets/prayer_countdown.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
@@ -18,17 +20,29 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final PrayerService _prayerService = PrayerService();
+  final LocationService _locationService = LocationService();
   List<PrayerDay> _prayerDays = [];
   bool _isLoading = true;
   DateTime _selectedDate = DateTime.now();
   String _currentNextPrayer = '';
+  String _locationName = 'الموقع الحالي';
 
   @override
   void initState() {
     super.initState();
+    _loadCachedLocation();
     PrayerNotificationService.initialize().then((_) {
       _loadPrayerTimes();
     });
+  }
+
+  Future<void> _loadCachedLocation() async {
+    final cachedName = await _locationService.getCachedLocationName();
+    if (cachedName != null && mounted) {
+      setState(() {
+        _locationName = cachedName;
+      });
+    }
   }
 
   Future<void> _loadPrayerTimes() async {
@@ -294,6 +308,20 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _updateLocation() async {
     setState(() => _isLoading = true);
     try {
+      // Get current position and name
+      final position = await _locationService.determinePosition();
+      final name = await _locationService.getPlaceName(
+          position.latitude, position.longitude);
+
+      if (name != null) {
+        await _locationService.cacheLocationName(name);
+        if (mounted) {
+          setState(() {
+            _locationName = name;
+          });
+        }
+      }
+
       final year = DateTime.now().year;
       final month = DateTime.now().month;
       final key = 'prayer_times_${year}_$month';
@@ -313,7 +341,7 @@ class _HomeScreenState extends State<HomeScreen> {
           context: context,
           builder: (context) => CupertinoAlertDialog(
             title: Text('تم التحديث'),
-            content: Text('تم تحديث الموقع ومواقيت الصلاة'),
+            content: Text('تم تحديث الموقع ومواقيت الصلاة\n$_locationName'),
             actions: [
               CupertinoDialogAction(
                 child: Text('حسناً'),
@@ -326,8 +354,111 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
+        showCupertinoDialog(
+          context: context,
+          builder: (context) => CupertinoAlertDialog(
+            title: Text('خطأ'),
+            content: Text('فشل تحديث الموقع: $e'),
+            actions: [
+              CupertinoDialogAction(
+                child: Text('حسناً'),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+        );
       }
     }
+  }
+
+  Widget _buildCustomHeader() {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'مواقيت الصلاة',
+                style: AppTextStyles.headlineLarge(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              SizedBox(height: 4),
+              Row(
+                children: [
+                  Icon(
+                    CupertinoIcons.location_fill,
+                    size: 14,
+                    color: AppColors.of(context).textSecondary,
+                  ),
+                  SizedBox(width: 4),
+                  Text(
+                    _locationName,
+                    style: AppTextStyles.titleSmall(context).copyWith(
+                      color: AppColors.of(context).textSecondary,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              _buildActionButton(
+                icon: CupertinoIcons.location,
+                onPressed: _updateLocation,
+              ),
+              SizedBox(width: AppSpacing.sm),
+              _buildActionButton(
+                icon: CupertinoIcons.calendar,
+                onPressed: _showDatePicker,
+              ),
+              SizedBox(width: AppSpacing.sm),
+              _buildActionButton(
+                icon: CupertinoIcons.today,
+                onPressed: _goToToday,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.of(context).surface,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.of(context).textPrimary.withOpacity(0.05),
+            blurRadius: 10,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: CupertinoButton(
+        padding: EdgeInsets.all(10),
+        minSize: 0,
+        onPressed: onPressed,
+        child: Icon(
+          icon,
+          size: 20,
+          color: AppColors.of(context).textPrimary,
+        ),
+      ),
+    );
   }
 
   @override
@@ -338,162 +469,170 @@ class _HomeScreenState extends State<HomeScreen> {
       textDirection: TextDirection.rtl,
       child: CupertinoPageScaffold(
         backgroundColor: colors.background,
-        navigationBar: CupertinoNavigationBar(
-          middle: Text(
-            'مواقيت الصلاة',
-            style: AppTextStyles.headlineSmall(context),
-          ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CupertinoButton(
-                padding: EdgeInsets.zero,
-                child: Icon(CupertinoIcons.location_solid, size: AppIconSizes.lg),
-                onPressed: _updateLocation,
-              ),
-              SizedBox(width: AppSpacing.xs),
-              CupertinoButton(
-                padding: EdgeInsets.zero,
-                child: Icon(CupertinoIcons.calendar, size: AppIconSizes.lg),
-                onPressed: _showDatePicker,
-              ),
-              SizedBox(width: AppSpacing.xs),
-              CupertinoButton(
-                padding: EdgeInsets.zero,
-                child: Icon(CupertinoIcons.today, size: AppIconSizes.lg),
-                onPressed: _goToToday,
-              ),
-            ],
-          ),
-        ),
         child: _isLoading
             ? Center(child: CupertinoActivityIndicator(radius: 20))
             : SafeArea(
-                child: CustomScrollView(
-                  slivers: [
-                    if (_prayerDays.isNotEmpty) ...[
-                      if (_selectedDate.year == DateTime.now().year &&
-                          _selectedDate.month == DateTime.now().month &&
-                          _selectedDate.day == DateTime.now().day)
-                        SliverToBoxAdapter(
-                          child: Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: AppSpacing.md,
-                            ),
-                            child: PrayerCountdown(
-                              timings:
-                                  _prayerDays[_selectedDate.day - 1].timings,
-                              onNextPrayerChanged: (nextPrayer) {
-                                setState(() {
-                                  _currentNextPrayer = nextPrayer;
-                                });
-                              },
-                            ),
-                          ),
-                        ),
-                      SliverToBoxAdapter(
-                        child: Padding(
-                          padding: EdgeInsets.all(AppSpacing.md),
-                          child: Container(
-                            decoration: AppDecorations.liquidGlass(context),
+                child: Column(
+                  children: [
+                    _buildCustomHeader(),
+                    Expanded(
+                      child: CustomScrollView(
+                        slivers: [
+                          SliverToBoxAdapter(
                             child: Padding(
-                              padding: EdgeInsets.all(AppSpacing.md),
-                              child: Column(
-                                children: [
-                                  Text(
-                                    '${_prayerDays[_selectedDate.day - 1].hijri.day} ${MonthTranslations.getHijriMonth(_prayerDays[_selectedDate.day - 1].hijri.monthEn)} ${_prayerDays[_selectedDate.day - 1].hijri.year}',
-                                    style: AppTextStyles.titleLarge(context)
-                                        .copyWith(
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                    textDirection: TextDirection.rtl,
-                                  ),
-                                  SizedBox(height: AppSpacing.sm),
-                                  Container(
-                                    width: 100,
-                                    height: 1,
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          AppColors.of(context)
-                                              .divider
-                                              .withOpacity(0.0),
-                                          AppColors.of(context).divider,
-                                          AppColors.of(context)
-                                              .divider
-                                              .withOpacity(0.0),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                  SizedBox(height: AppSpacing.sm),
-                                  Text(
-                                    '${_selectedDate.day} ${MonthTranslations.getGregorianMonth(intl.DateFormat('MMMM').format(_selectedDate))} ${_selectedDate.year}',
-                                    style: AppTextStyles.titleMedium(context)
-                                        .copyWith(
-                                      color:
-                                          AppColors.of(context).textSecondary,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                    textDirection: TextDirection.rtl,
-                                  ),
-                                  SizedBox(height: AppSpacing.md),
-                                  Builder(builder: (context) {
-                                    final isToday = _selectedDate.year ==
-                                            DateTime.now().year &&
-                                        _selectedDate.month ==
-                                            DateTime.now().month &&
-                                        _selectedDate.day == DateTime.now().day;
-                                    final nextPrayer =
-                                        isToday ? _currentNextPrayer : '';
-
-                                    return Column(
-                                      children: [
-                                        _buildPrayerTimeRow(
-                                          'الفجر',
-                                          _prayerDays[_selectedDate.day - 1]
-                                              .timings
-                                              .fajr,
-                                          isToday && nextPrayer == 'الفجر',
-                                        ),
-                                        _buildPrayerTimeRow(
-                                          'الظهر',
-                                          _prayerDays[_selectedDate.day - 1]
-                                              .timings
-                                              .dhuhr,
-                                          isToday && nextPrayer == 'الظهر',
-                                        ),
-                                        _buildPrayerTimeRow(
-                                          'العصر',
-                                          _prayerDays[_selectedDate.day - 1]
-                                              .timings
-                                              .asr,
-                                          isToday && nextPrayer == 'العصر',
-                                        ),
-                                        _buildPrayerTimeRow(
-                                          'المغرب',
-                                          _prayerDays[_selectedDate.day - 1]
-                                              .timings
-                                              .maghrib,
-                                          isToday && nextPrayer == 'المغرب',
-                                        ),
-                                        _buildPrayerTimeRow(
-                                          'العشاء',
-                                          _prayerDays[_selectedDate.day - 1]
-                                              .timings
-                                              .isha,
-                                          isToday && nextPrayer == 'العشاء',
-                                        ),
-                                      ],
-                                    );
-                                  }),
-                                ],
+                              padding: EdgeInsets.symmetric(
+                                vertical: AppSpacing.sm,
+                              ),
+                              child: CalendarStrip(
+                                selectedDate: _selectedDate,
+                                onDateSelected: (date) {
+                                  final prevDate = _selectedDate;
+                                  setState(() {
+                                    _selectedDate = date;
+                                    if (prevDate.month != date.month ||
+                                        prevDate.year != date.year) {
+                                      _loadPrayerTimes();
+                                    }
+                                  });
+                                },
                               ),
                             ),
                           ),
-                        ),
+                          if (_prayerDays.isNotEmpty) ...[
+                            if (_selectedDate.year == DateTime.now().year &&
+                                _selectedDate.month == DateTime.now().month &&
+                                _selectedDate.day == DateTime.now().day)
+                              SliverToBoxAdapter(
+                                child: Padding(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: AppSpacing.md,
+                                  ),
+                                  child: PrayerCountdown(
+                                    timings: _prayerDays[_selectedDate.day - 1]
+                                        .timings,
+                                    onNextPrayerChanged: (nextPrayer) {
+                                      setState(() {
+                                        _currentNextPrayer = nextPrayer;
+                                      });
+                                    },
+                                  ),
+                                ),
+                              ),
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: EdgeInsets.all(AppSpacing.md),
+                                child: Container(
+                                  decoration:
+                                      AppDecorations.liquidGlass(context),
+                                  child: Padding(
+                                    padding: EdgeInsets.all(AppSpacing.md),
+                                    child: Column(
+                                      children: [
+                                        Text(
+                                          '${_prayerDays[_selectedDate.day - 1].hijri.day} ${MonthTranslations.getHijriMonth(_prayerDays[_selectedDate.day - 1].hijri.monthEn)} ${_prayerDays[_selectedDate.day - 1].hijri.year}',
+                                          style:
+                                              AppTextStyles.titleLarge(context)
+                                                  .copyWith(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          textDirection: TextDirection.rtl,
+                                        ),
+                                        SizedBox(height: AppSpacing.sm),
+                                        Container(
+                                          width: 100,
+                                          height: 1,
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              colors: [
+                                                AppColors.of(context)
+                                                    .divider
+                                                    .withOpacity(0.0),
+                                                AppColors.of(context).divider,
+                                                AppColors.of(context)
+                                                    .divider
+                                                    .withOpacity(0.0),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                        SizedBox(height: AppSpacing.sm),
+                                        Text(
+                                          '${_selectedDate.day} ${MonthTranslations.getGregorianMonth(intl.DateFormat('MMMM').format(_selectedDate))} ${_selectedDate.year}',
+                                          style: AppTextStyles.titleMedium(
+                                                  context)
+                                              .copyWith(
+                                            color: AppColors.of(context)
+                                                .textSecondary,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                          textDirection: TextDirection.rtl,
+                                        ),
+                                        SizedBox(height: AppSpacing.md),
+                                        Builder(builder: (context) {
+                                          final isToday = _selectedDate.year ==
+                                                  DateTime.now().year &&
+                                              _selectedDate.month ==
+                                                  DateTime.now().month &&
+                                              _selectedDate.day ==
+                                                  DateTime.now().day;
+                                          final nextPrayer =
+                                              isToday ? _currentNextPrayer : '';
+
+                                          return Column(
+                                            children: [
+                                              _buildPrayerTimeRow(
+                                                'الفجر',
+                                                _prayerDays[_selectedDate.day - 1]
+                                                    .timings
+                                                    .fajr,
+                                                isToday &&
+                                                    nextPrayer == 'الفجر',
+                                              ),
+                                              _buildPrayerTimeRow(
+                                                'الظهر',
+                                                _prayerDays[_selectedDate.day - 1]
+                                                    .timings
+                                                    .dhuhr,
+                                                isToday &&
+                                                    nextPrayer == 'الظهر',
+                                              ),
+                                              _buildPrayerTimeRow(
+                                                'العصر',
+                                                _prayerDays[_selectedDate.day - 1]
+                                                    .timings
+                                                    .asr,
+                                                isToday &&
+                                                    nextPrayer == 'العصر',
+                                              ),
+                                              _buildPrayerTimeRow(
+                                                'المغرب',
+                                                _prayerDays[_selectedDate.day - 1]
+                                                    .timings
+                                                    .maghrib,
+                                                isToday &&
+                                                    nextPrayer == 'المغرب',
+                                              ),
+                                              _buildPrayerTimeRow(
+                                                'العشاء',
+                                                _prayerDays[_selectedDate.day - 1]
+                                                    .timings
+                                                    .isha,
+                                                isToday &&
+                                                    nextPrayer == 'العشاء',
+                                              ),
+                                            ],
+                                          );
+                                        }),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                    ],
+                    ),
                   ],
                 ),
               ),
