@@ -1,17 +1,28 @@
-import 'package:athan_app_v2/screens/home_screen.dart';
+import 'package:athan_app_v2/screens/main_shell.dart';
+import 'package:athan_app_v2/services/connectivity_service.dart';
 import 'package:athan_app_v2/services/prayer_notitfication_service.dart';
+import 'package:athan_app_v2/services/storage_service.dart';
 import 'package:athan_app_v2/theme.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize date formatting for Arabic locale
+  await initializeDateFormatting('ar', null);
+
   await PrayerNotificationService.initialize();
+  await StorageService().initialize();
+  await ConnectivityService().initialize();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(MyApp());
 }
 
 class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return CupertinoApp(
@@ -55,7 +66,7 @@ class MyApp extends StatelessWidget {
           ),
         ),
       ),
-      home: HomeScreen(),
+      home: MainShell(),
       locale: Locale('ar', 'DZ'),
     );
   }

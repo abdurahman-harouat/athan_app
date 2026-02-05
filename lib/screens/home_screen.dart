@@ -1,11 +1,13 @@
+import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:athan_app_v2/models/prayer_times.dart';
+import 'package:athan_app_v2/services/connectivity_service.dart';
 import 'package:athan_app_v2/services/location_service.dart';
 import 'package:athan_app_v2/services/prayer_notitfication_service.dart';
 import 'package:athan_app_v2/services/prayer_service.dart';
 import 'package:athan_app_v2/theme.dart';
 import 'package:athan_app_v2/utils/month_translations.dart';
 import 'package:athan_app_v2/utils/prayer_icons.dart';
-import 'package:athan_app_v2/widgets/calendar_strip.dart';
 import 'package:athan_app_v2/widgets/prayer_countdown.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
@@ -21,27 +23,97 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final PrayerService _prayerService = PrayerService();
   final LocationService _locationService = LocationService();
+  final ConnectivityService _connectivityService = ConnectivityService();
+
   List<PrayerDay> _prayerDays = [];
   bool _isLoading = true;
+  bool _isDownloading = false;
+  int _downloadProgress = 0;
+  int _downloadTotal = 0;
   DateTime _selectedDate = DateTime.now();
   String _currentNextPrayer = '';
   String _locationName = 'الموقع الحالي';
+  bool _isOnline = true;
+  double? _currentLatitude;
+  double? _currentLongitude;
+
+  StreamSubscription<bool>? _connectivitySubscription;
 
   @override
   void initState() {
     super.initState();
-    _loadCachedLocation();
-    PrayerNotificationService.initialize().then((_) {
-      _loadPrayerTimes();
+    _initializeConnectivity();
+    _initializeApp();
+  }
+
+  @override
+  void dispose() {
+    _connectivitySubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initializeConnectivity() async {
+    await _connectivityService.initialize();
+    _isOnline = _connectivityService.isOnline;
+
+    _connectivitySubscription =
+        _connectivityService.connectivityStream.listen((isOnline) {
+      if (mounted) {
+        setState(() => _isOnline = isOnline);
+      }
     });
   }
 
-  Future<void> _loadCachedLocation() async {
-    final cachedName = await _locationService.getCachedLocationName();
-    if (cachedName != null && mounted) {
-      setState(() {
-        _locationName = cachedName;
-      });
+  Future<void> _initializeApp() async {
+    setState(() => _isLoading = true);
+
+    // Initialize notifications first
+    await PrayerNotificationService.initialize();
+
+    // Try to load cached location first for instant offline startup
+    final cachedLocation = await _locationService.getCurrentSavedLocation();
+
+    if (cachedLocation != null) {
+      // We have cached data - use it directly without fetching GPS
+      _currentLatitude = cachedLocation['latitude'];
+      _currentLongitude = cachedLocation['longitude'];
+      if (mounted) {
+        setState(() {
+          _locationName = cachedLocation['name'] ?? 'الموقع الحالي';
+        });
+      }
+      // Load prayer times from cache
+      await _loadPrayerTimes();
+    } else {
+      // No cached data - need to fetch location (first time use)
+      try {
+        final position = await _locationService.determinePosition();
+        _currentLatitude = position.latitude;
+        _currentLongitude = position.longitude;
+
+        // Get and cache the location name
+        final name = await _locationService.getPlaceName(
+          position.latitude,
+          position.longitude,
+        );
+        if (name != null) {
+          await _locationService.saveCurrentLocation(
+              position.latitude, position.longitude, name);
+          await _locationService.cacheLocationName(name);
+          if (mounted) {
+            setState(() {
+              _locationName = name;
+            });
+          }
+        }
+
+        // Load prayer times (will fetch from API since no cache)
+        await _loadPrayerTimes();
+      } catch (e) {
+        // Location failed and no cache - show error
+        setState(() => _isLoading = false);
+        _showLocationRequiredDialog();
+      }
     }
   }
 
@@ -50,13 +122,48 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final year = _selectedDate.year;
       final month = _selectedDate.month;
-      final key = 'prayer_times_${year}_$month';
 
-      var prayerDays = await _prayerService.loadPrayerTimes(key);
+      // Get coordinates for loading prayer times
+      double? lat = _currentLatitude;
+      double? lng = _currentLongitude;
 
-      if (prayerDays.isEmpty) {
-        prayerDays = await _prayerService.fetchPrayerTimes(year, month);
-        await _prayerService.savePrayerTimes(prayerDays, key);
+      // If no coordinates, try to get from cached location
+      if (lat == null || lng == null) {
+        final cachedLocation = await _locationService.getCurrentSavedLocation();
+        if (cachedLocation != null) {
+          lat = cachedLocation['latitude'];
+          lng = cachedLocation['longitude'];
+          _currentLatitude = lat;
+          _currentLongitude = lng;
+        }
+      }
+
+      List<PrayerDay> prayerDays = [];
+
+      if (lat != null && lng != null) {
+        // Use location-based caching
+        try {
+          prayerDays = await _prayerService.getPrayerTimesForMonth(
+              year, month, lat, lng);
+        } catch (e) {
+          // If fetch fails, show error
+          if (mounted) {
+            setState(() => _isLoading = false);
+            if (!_isOnline) {
+              _showOfflineNoDataDialog();
+            } else {
+              _showLocationRequiredDialog();
+            }
+            return;
+          }
+        }
+      } else {
+        // No location available at all
+        if (mounted) {
+          setState(() => _isLoading = false);
+          _showLocationRequiredDialog();
+          return;
+        }
       }
 
       await PrayerNotificationService.cancelAllNotifications();
@@ -102,6 +209,45 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     }
+  }
+
+  void _showLocationRequiredDialog() {
+    showCupertinoDialog(
+      context: context,
+      builder: (context) => CupertinoAlertDialog(
+        title: const Text('الموقع مطلوب'),
+        content:
+            const Text('يرجى السماح بالوصول إلى الموقع لتحميل مواقيت الصلاة'),
+        actions: [
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            child: const Text('تحديث الموقع'),
+            onPressed: () {
+              Navigator.pop(context);
+              _updateLocation();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showOfflineNoDataDialog() {
+    showCupertinoDialog(
+      context: context,
+      builder: (context) => CupertinoAlertDialog(
+        title: const Text('لا توجد بيانات'),
+        content: const Text(
+            'لا يوجد اتصال بالإنترنت ولا توجد بيانات محفوظة لهذا الشهر. يرجى الاتصال بالإنترنت لتحميل البيانات.'),
+        actions: [
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            child: const Text('حسناً'),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _scheduleTodaysPrayers(PrayerDay prayerDay) async {
@@ -292,8 +438,8 @@ class _HomeScreenState extends State<HomeScreen> {
               child: CupertinoDatePicker(
                 mode: CupertinoDatePickerMode.date,
                 initialDateTime: _selectedDate,
-                minimumDate: DateTime.now().subtract(Duration(days: 365)),
-                maximumDate: DateTime.now().add(Duration(days: 3650)),
+                minimumDate: DateTime(2020, 1, 1),
+                maximumDate: DateTime(2030, 12, 31),
                 onDateTimeChanged: (date) {
                   setState(() => _selectedDate = date);
                 },
@@ -310,10 +456,15 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       // Get current position and name
       final position = await _locationService.determinePosition();
+      _currentLatitude = position.latitude;
+      _currentLongitude = position.longitude;
+
       final name = await _locationService.getPlaceName(
           position.latitude, position.longitude);
 
       if (name != null) {
+        await _locationService.saveCurrentLocation(
+            position.latitude, position.longitude, name);
         await _locationService.cacheLocationName(name);
         if (mounted) {
           setState(() {
@@ -321,12 +472,6 @@ class _HomeScreenState extends State<HomeScreen> {
           });
         }
       }
-
-      final year = DateTime.now().year;
-      final month = DateTime.now().month;
-      final key = 'prayer_times_${year}_$month';
-
-      await _prayerService.clearPrayerTimes(key);
 
       if (mounted) {
         setState(() {
@@ -337,19 +482,8 @@ class _HomeScreenState extends State<HomeScreen> {
       await _loadPrayerTimes();
 
       if (mounted) {
-        showCupertinoDialog(
-          context: context,
-          builder: (context) => CupertinoAlertDialog(
-            title: Text('تم التحديث'),
-            content: Text('تم تحديث الموقع ومواقيت الصلاة\n$_locationName'),
-            actions: [
-              CupertinoDialogAction(
-                child: Text('حسناً'),
-                onPressed: () => Navigator.pop(context),
-              ),
-            ],
-          ),
-        );
+        // Ask if user wants to download 7 years of data
+        _showDownloadDataDialog(position.latitude, position.longitude);
       }
     } catch (e) {
       if (mounted) {
@@ -371,6 +505,196 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _showDownloadDataDialog(double latitude, double longitude) {
+    showCupertinoDialog(
+      context: context,
+      builder: (context) => CupertinoAlertDialog(
+        title: const Text('تحميل البيانات للعمل بدون إنترنت'),
+        content: const Text(
+            'هل تريد تحميل مواقيت الصلاة لـ 7 سنوات للعمل بدون اتصال؟\n\nهذا قد يستغرق بضع دقائق.'),
+        actions: [
+          CupertinoDialogAction(
+            child: const Text('لاحقاً'),
+            onPressed: () => Navigator.pop(context),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            child: const Text('تحميل الآن'),
+            onPressed: () {
+              Navigator.pop(context);
+              _downloadAllYearsData(latitude, longitude);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _downloadAllYearsData(double latitude, double longitude) async {
+    setState(() {
+      _isDownloading = true;
+      _downloadProgress = 0;
+      _downloadTotal = 0;
+    });
+
+    try {
+      await _prayerService.fetchAndCacheAllYears(
+        latitude,
+        longitude,
+        onProgress: (current, total) {
+          if (mounted) {
+            setState(() {
+              _downloadProgress = current;
+              _downloadTotal = total;
+            });
+          }
+        },
+      );
+
+      if (mounted) {
+        setState(() => _isDownloading = false);
+        showCupertinoDialog(
+          context: context,
+          builder: (context) => CupertinoAlertDialog(
+            title: const Text('تم التحميل'),
+            content: const Text(
+                'تم تحميل مواقيت الصلاة لـ 7 سنوات بنجاح. يمكنك الآن استخدام التطبيق بدون إنترنت.'),
+            actions: [
+              CupertinoDialogAction(
+                child: const Text('حسناً'),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isDownloading = false);
+        showCupertinoDialog(
+          context: context,
+          builder: (context) => CupertinoAlertDialog(
+            title: const Text('خطأ'),
+            content: Text('فشل تحميل البيانات: $e'),
+            actions: [
+              CupertinoDialogAction(
+                child: const Text('حسناً'),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+  }
+
+  void _showSavedLocationsDialog() async {
+    final locations = await _locationService.getSavedLocations();
+
+    if (!mounted) return;
+
+    showCupertinoModalPopup(
+      context: context,
+      builder: (context) => Container(
+        height: 400,
+        color: AppColors.of(context).background,
+        child: SafeArea(
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(color: AppColors.of(context).divider),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    CupertinoButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('إغلاق'),
+                    ),
+                    Text(
+                      'المواقع المحفوظة',
+                      style: AppTextStyles.titleMedium(context).copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(width: 70), // Balance the layout
+                  ],
+                ),
+              ),
+              Expanded(
+                child: locations.isEmpty
+                    ? Center(
+                        child: Text(
+                          'لا توجد مواقع محفوظة',
+                          style: AppTextStyles.bodyMedium(context).copyWith(
+                            color: AppColors.of(context).textSecondary,
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: locations.length,
+                        itemBuilder: (context, index) {
+                          final location = locations[index];
+                          return CupertinoButton(
+                            padding: const EdgeInsets.all(AppSpacing.md),
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _selectSavedLocation(location);
+                            },
+                            child: Row(
+                              children: [
+                                Icon(
+                                  CupertinoIcons.location_fill,
+                                  color: AppColors.of(context).primary,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: AppSpacing.md),
+                                Expanded(
+                                  child: Text(
+                                    location.name,
+                                    style: AppTextStyles.bodyLarge(context),
+                                  ),
+                                ),
+                                Icon(
+                                  CupertinoIcons.chevron_left,
+                                  size: 16,
+                                  color: AppColors.of(context).textTertiary,
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _selectSavedLocation(SavedLocation location) async {
+    setState(() => _isLoading = true);
+
+    _currentLatitude = location.latitude;
+    _currentLongitude = location.longitude;
+    _locationName = location.name;
+
+    await _locationService.saveCurrentLocation(
+        location.latitude, location.longitude, location.name);
+    await _locationService.cacheLocationName(location.name);
+
+    setState(() {
+      _selectedDate = DateTime.now();
+    });
+
+    await _loadPrayerTimes();
+  }
+
   Widget _buildCustomHeader() {
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -383,29 +707,64 @@ class _HomeScreenState extends State<HomeScreen> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'مواقيت الصلاة',
-                style: AppTextStyles.headlineLarge(context).copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              SizedBox(height: 4),
               Row(
                 children: [
-                  Icon(
-                    CupertinoIcons.location_fill,
-                    size: 14,
-                    color: AppColors.of(context).textSecondary,
-                  ),
-                  SizedBox(width: 4),
                   Text(
-                    _locationName,
-                    style: AppTextStyles.titleSmall(context).copyWith(
-                      color: AppColors.of(context).textSecondary,
-                      fontSize: 14,
+                    'مواقيت الصلاة',
+                    style: AppTextStyles.headlineLarge(context).copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  // Online/Offline indicator dot
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: _isOnline
+                          ? CupertinoColors.activeGreen
+                          : CupertinoColors.systemRed,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: (_isOnline
+                                  ? CupertinoColors.activeGreen
+                                  : CupertinoColors.systemRed)
+                              .withOpacity(0.4),
+                          blurRadius: 4,
+                          spreadRadius: 1,
+                        ),
+                      ],
                     ),
                   ),
                 ],
+              ),
+              SizedBox(height: 4),
+              GestureDetector(
+                onTap: _showSavedLocationsDialog,
+                child: Row(
+                  children: [
+                    Icon(
+                      CupertinoIcons.location_fill,
+                      size: 14,
+                      color: AppColors.of(context).textSecondary,
+                    ),
+                    SizedBox(width: 4),
+                    Text(
+                      _locationName,
+                      style: AppTextStyles.titleSmall(context).copyWith(
+                        color: AppColors.of(context).textSecondary,
+                        fontSize: 14,
+                      ),
+                    ),
+                    SizedBox(width: 4),
+                    Icon(
+                      CupertinoIcons.chevron_down,
+                      size: 12,
+                      color: AppColors.of(context).textSecondary,
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -450,12 +809,76 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: CupertinoButton(
         padding: EdgeInsets.all(10),
-        minSize: 0,
         onPressed: onPressed,
+        minimumSize: Size(0, 0),
         child: Icon(
           icon,
           size: 20,
           color: AppColors.of(context).textPrimary,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDownloadingState() {
+    final progress =
+        _downloadTotal > 0 ? _downloadProgress / _downloadTotal : 0.0;
+
+    return SafeArea(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                CupertinoIcons.cloud_download,
+                size: 64,
+                color: AppColors.of(context).primary,
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              Text(
+                'جاري تحميل البيانات...',
+                style: AppTextStyles.headlineSmall(context).copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'تحميل مواقيت الصلاة لـ 7 سنوات للعمل بدون إنترنت',
+                style: AppTextStyles.bodyMedium(context).copyWith(
+                  color: AppColors.of(context).textSecondary,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppSpacing.xl),
+              Container(
+                width: double.infinity,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: AppColors.of(context).cardBackground,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: FractionallySizedBox(
+                  alignment: Alignment.centerRight,
+                  widthFactor: progress,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.of(context).primary,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                '$_downloadProgress / $_downloadTotal شهر',
+                style: AppTextStyles.bodyMedium(context).copyWith(
+                  color: AppColors.of(context).textSecondary,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -466,176 +889,175 @@ class _HomeScreenState extends State<HomeScreen> {
     final colors = AppColors.of(context);
 
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: ui.TextDirection.rtl,
       child: CupertinoPageScaffold(
         backgroundColor: colors.background,
         child: _isLoading
             ? Center(child: CupertinoActivityIndicator(radius: 20))
-            : SafeArea(
-                child: Column(
-                  children: [
-                    _buildCustomHeader(),
-                    Expanded(
-                      child: CustomScrollView(
-                        slivers: [
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: EdgeInsets.symmetric(
-                                vertical: AppSpacing.sm,
-                              ),
-                              child: CalendarStrip(
-                                selectedDate: _selectedDate,
-                                onDateSelected: (date) {
-                                  final prevDate = _selectedDate;
-                                  setState(() {
-                                    _selectedDate = date;
-                                    if (prevDate.month != date.month ||
-                                        prevDate.year != date.year) {
-                                      _loadPrayerTimes();
-                                    }
-                                  });
-                                },
-                              ),
-                            ),
-                          ),
-                          if (_prayerDays.isNotEmpty) ...[
-                            if (_selectedDate.year == DateTime.now().year &&
-                                _selectedDate.month == DateTime.now().month &&
-                                _selectedDate.day == DateTime.now().day)
-                              SliverToBoxAdapter(
-                                child: Padding(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: AppSpacing.md,
+            : _isDownloading
+                ? _buildDownloadingState()
+                : SafeArea(
+                    child: Column(
+                      children: [
+                        _buildCustomHeader(),
+                        Expanded(
+                          child: CustomScrollView(
+                            slivers: [
+                              if (_prayerDays.isNotEmpty) ...[
+                                if (_selectedDate.year == DateTime.now().year &&
+                                    _selectedDate.month ==
+                                        DateTime.now().month &&
+                                    _selectedDate.day == DateTime.now().day)
+                                  SliverToBoxAdapter(
+                                    child: Padding(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: AppSpacing.md,
+                                      ),
+                                      child: PrayerCountdown(
+                                        timings:
+                                            _prayerDays[_selectedDate.day - 1]
+                                                .timings,
+                                        onNextPrayerChanged: (nextPrayer) {
+                                          setState(() {
+                                            _currentNextPrayer = nextPrayer;
+                                          });
+                                        },
+                                      ),
+                                    ),
                                   ),
-                                  child: PrayerCountdown(
-                                    timings: _prayerDays[_selectedDate.day - 1]
-                                        .timings,
-                                    onNextPrayerChanged: (nextPrayer) {
-                                      setState(() {
-                                        _currentNextPrayer = nextPrayer;
-                                      });
-                                    },
-                                  ),
-                                ),
-                              ),
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: EdgeInsets.all(AppSpacing.md),
-                                child: Container(
-                                  decoration:
-                                      AppDecorations.liquidGlass(context),
+                                SliverToBoxAdapter(
                                   child: Padding(
                                     padding: EdgeInsets.all(AppSpacing.md),
-                                    child: Column(
-                                      children: [
-                                        Text(
-                                          '${_prayerDays[_selectedDate.day - 1].hijri.day} ${MonthTranslations.getHijriMonth(_prayerDays[_selectedDate.day - 1].hijri.monthEn)} ${_prayerDays[_selectedDate.day - 1].hijri.year}',
-                                          style:
-                                              AppTextStyles.titleLarge(context)
+                                    child: Container(
+                                      decoration:
+                                          AppDecorations.liquidGlass(context),
+                                      child: Padding(
+                                        padding: EdgeInsets.all(AppSpacing.md),
+                                        child: Column(
+                                          children: [
+                                            Text(
+                                              '${_prayerDays[_selectedDate.day - 1].hijri.day} ${MonthTranslations.getHijriMonth(_prayerDays[_selectedDate.day - 1].hijri.monthEn)} ${_prayerDays[_selectedDate.day - 1].hijri.year}',
+                                              style: AppTextStyles.titleLarge(
+                                                      context)
                                                   .copyWith(
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                          textDirection: TextDirection.rtl,
-                                        ),
-                                        SizedBox(height: AppSpacing.sm),
-                                        Container(
-                                          width: 100,
-                                          height: 1,
-                                          decoration: BoxDecoration(
-                                            gradient: LinearGradient(
-                                              colors: [
-                                                AppColors.of(context)
-                                                    .divider
-                                                    .withOpacity(0.0),
-                                                AppColors.of(context).divider,
-                                                AppColors.of(context)
-                                                    .divider
-                                                    .withOpacity(0.0),
-                                              ],
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                              textDirection:
+                                                  ui.TextDirection.rtl,
                                             ),
-                                          ),
-                                        ),
-                                        SizedBox(height: AppSpacing.sm),
-                                        Text(
-                                          '${_selectedDate.day} ${MonthTranslations.getGregorianMonth(intl.DateFormat('MMMM').format(_selectedDate))} ${_selectedDate.year}',
-                                          style: AppTextStyles.titleMedium(
-                                                  context)
-                                              .copyWith(
-                                            color: AppColors.of(context)
-                                                .textSecondary,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                          textDirection: TextDirection.rtl,
-                                        ),
-                                        SizedBox(height: AppSpacing.md),
-                                        Builder(builder: (context) {
-                                          final isToday = _selectedDate.year ==
-                                                  DateTime.now().year &&
-                                              _selectedDate.month ==
-                                                  DateTime.now().month &&
-                                              _selectedDate.day ==
-                                                  DateTime.now().day;
-                                          final nextPrayer =
-                                              isToday ? _currentNextPrayer : '';
+                                            SizedBox(height: AppSpacing.sm),
+                                            Container(
+                                              width: 100,
+                                              height: 1,
+                                              decoration: BoxDecoration(
+                                                gradient: LinearGradient(
+                                                  colors: [
+                                                    AppColors.of(context)
+                                                        .divider
+                                                        .withOpacity(0.0),
+                                                    AppColors.of(context)
+                                                        .divider,
+                                                    AppColors.of(context)
+                                                        .divider
+                                                        .withOpacity(0.0),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                            SizedBox(height: AppSpacing.sm),
+                                            Text(
+                                              '${_selectedDate.day} ${MonthTranslations.getGregorianMonth(intl.DateFormat('MMMM').format(_selectedDate))} ${_selectedDate.year}',
+                                              style: AppTextStyles.titleMedium(
+                                                      context)
+                                                  .copyWith(
+                                                color: AppColors.of(context)
+                                                    .textSecondary,
+                                              ),
+                                              textAlign: TextAlign.center,
+                                              textDirection:
+                                                  ui.TextDirection.rtl,
+                                            ),
+                                            SizedBox(height: AppSpacing.md),
+                                            Builder(builder: (context) {
+                                              final isToday = _selectedDate
+                                                          .year ==
+                                                      DateTime.now().year &&
+                                                  _selectedDate.month ==
+                                                      DateTime.now().month &&
+                                                  _selectedDate.day ==
+                                                      DateTime.now().day;
+                                              final nextPrayer = isToday
+                                                  ? _currentNextPrayer
+                                                  : '';
 
-                                          return Column(
-                                            children: [
-                                              _buildPrayerTimeRow(
-                                                'الفجر',
-                                                _prayerDays[_selectedDate.day - 1]
-                                                    .timings
-                                                    .fajr,
-                                                isToday &&
-                                                    nextPrayer == 'الفجر',
-                                              ),
-                                              _buildPrayerTimeRow(
-                                                'الظهر',
-                                                _prayerDays[_selectedDate.day - 1]
-                                                    .timings
-                                                    .dhuhr,
-                                                isToday &&
-                                                    nextPrayer == 'الظهر',
-                                              ),
-                                              _buildPrayerTimeRow(
-                                                'العصر',
-                                                _prayerDays[_selectedDate.day - 1]
-                                                    .timings
-                                                    .asr,
-                                                isToday &&
-                                                    nextPrayer == 'العصر',
-                                              ),
-                                              _buildPrayerTimeRow(
-                                                'المغرب',
-                                                _prayerDays[_selectedDate.day - 1]
-                                                    .timings
-                                                    .maghrib,
-                                                isToday &&
-                                                    nextPrayer == 'المغرب',
-                                              ),
-                                              _buildPrayerTimeRow(
-                                                'العشاء',
-                                                _prayerDays[_selectedDate.day - 1]
-                                                    .timings
-                                                    .isha,
-                                                isToday &&
-                                                    nextPrayer == 'العشاء',
-                                              ),
-                                            ],
-                                          );
-                                        }),
-                                      ],
+                                              return Column(
+                                                children: [
+                                                  _buildPrayerTimeRow(
+                                                    'الفجر',
+                                                    _prayerDays[
+                                                            _selectedDate.day -
+                                                                1]
+                                                        .timings
+                                                        .fajr,
+                                                    isToday &&
+                                                        nextPrayer == 'الفجر',
+                                                  ),
+                                                  _buildPrayerTimeRow(
+                                                    'الظهر',
+                                                    _prayerDays[
+                                                            _selectedDate.day -
+                                                                1]
+                                                        .timings
+                                                        .dhuhr,
+                                                    isToday &&
+                                                        nextPrayer == 'الظهر',
+                                                  ),
+                                                  _buildPrayerTimeRow(
+                                                    'العصر',
+                                                    _prayerDays[
+                                                            _selectedDate.day -
+                                                                1]
+                                                        .timings
+                                                        .asr,
+                                                    isToday &&
+                                                        nextPrayer == 'العصر',
+                                                  ),
+                                                  _buildPrayerTimeRow(
+                                                    'المغرب',
+                                                    _prayerDays[
+                                                            _selectedDate.day -
+                                                                1]
+                                                        .timings
+                                                        .maghrib,
+                                                    isToday &&
+                                                        nextPrayer == 'المغرب',
+                                                  ),
+                                                  _buildPrayerTimeRow(
+                                                    'العشاء',
+                                                    _prayerDays[
+                                                            _selectedDate.day -
+                                                                1]
+                                                        .timings
+                                                        .isha,
+                                                    isToday &&
+                                                        nextPrayer == 'العشاء',
+                                                  ),
+                                                ],
+                                              );
+                                            }),
+                                          ],
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
+                  ),
       ),
     );
   }
