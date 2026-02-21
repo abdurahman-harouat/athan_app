@@ -1,16 +1,15 @@
-import 'dart:convert';
-import 'dart:io';
 import 'dart:ui' as ui;
+import 'package:athan_app_v2/models/prayer_times.dart';
 import 'package:athan_app_v2/models/settings.dart';
-import 'package:athan_app_v2/screens/migration_screen.dart';
 import 'package:athan_app_v2/services/location_service.dart';
 import 'package:athan_app_v2/services/prayer_notitfication_service.dart';
 import 'package:athan_app_v2/services/prayer_service.dart';
-import 'package:athan_app_v2/services/storage_service.dart';
+import 'package:athan_app_v2/services/settings_notifier.dart';
 import 'package:athan_app_v2/theme.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show Divider, LinearProgressIndicator;
+import 'package:intl/intl.dart' as intl;
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -20,7 +19,6 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final StorageService _storageService = StorageService();
   final PrayerService _prayerService = PrayerService();
   final LocationService _locationService = LocationService();
   AppSettings _settings = AppSettings();
@@ -52,22 +50,159 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
-    final settings = await _storageService.getSettings();
+    await settingsNotifier.loadSettings();
     setState(() {
-      _settings = settings;
+      _settings = settingsNotifier.settings;
       _isLoading = false;
     });
   }
 
   Future<void> _saveSettings() async {
-    await _storageService.saveSettings(_settings);
+    if (kDebugMode) {
+      debugPrint('💾 Saving settings from SettingsScreen:');
+      debugPrint(
+          '   Fajr adjustment: ${_settings.timeAdjustments.fajrAdjustment}');
+      debugPrint(
+          '   Dhuhr adjustment: ${_settings.timeAdjustments.dhuhrAdjustment}');
+      debugPrint(
+          '   Asr adjustment: ${_settings.timeAdjustments.asrAdjustment}');
+      debugPrint(
+          '   Maghrib adjustment: ${_settings.timeAdjustments.maghribAdjustment}');
+      debugPrint(
+          '   Isha adjustment: ${_settings.timeAdjustments.ishaAdjustment}');
+    }
+    await settingsNotifier.saveSettings(_settings);
     await _updateNotifications();
   }
 
+  /// Adjusts a prayer time string by adding/subtracting minutes
+  String _adjustTime(String time, int adjustmentMinutes) {
+    if (adjustmentMinutes == 0) return time;
+
+    final parts = time.split(':');
+    final hours = int.parse(parts[0]);
+    final minutes = int.parse(parts[1]);
+
+    final totalMinutes = hours * 60 + minutes + adjustmentMinutes;
+    final adjustedHours = (totalMinutes ~/ 60) % 24;
+    final adjustedMinutes = totalMinutes % 60;
+
+    // Handle negative adjustments that go past midnight
+    final actualHours = totalMinutes < 0 ? 24 + adjustedHours : adjustedHours;
+
+    return '${actualHours.toString().padLeft(2, '0')}:${adjustedMinutes.abs().toString().padLeft(2, '0')}';
+  }
+
   Future<void> _updateNotifications() async {
-    // Re-schedule notifications with new settings
+    // Cancel all existing notifications
     await PrayerNotificationService.cancelAllNotifications();
-    // The notifications will be re-scheduled when the home screen loads
+
+    // Re-schedule notifications with new settings
+    final location = await _locationService.getCurrentSavedLocation();
+    if (location == null) {
+      if (kDebugMode) {
+        debugPrint('⚠️ No saved location, cannot re-schedule notifications');
+      }
+      return;
+    }
+
+    final lat = location['latitude'] as double;
+    final lng = location['longitude'] as double;
+
+    // Get today's prayer times
+    final now = DateTime.now();
+    try {
+      final prayerDays = await _prayerService.getPrayerTimesForMonth(
+        now.year,
+        now.month,
+        lat,
+        lng,
+      );
+
+      final todayPrayers = prayerDays.firstWhere(
+        (day) => day.readableDate == intl.DateFormat('dd MMM yyyy').format(now),
+        orElse: () => prayerDays.first,
+      );
+
+      // Apply time adjustments
+      final adjustments = _settings.timeAdjustments;
+
+      // Schedule notifications with updated settings and adjusted times
+      final prayers = {
+        'Fajr': (
+          PrayerNames.arabic['Fajr']!,
+          _adjustTime(todayPrayers.timings.fajr, adjustments.fajrAdjustment),
+          _settings.fajrSettings
+        ),
+        'Dhuhr': (
+          PrayerNames.arabic['Dhuhr']!,
+          _adjustTime(todayPrayers.timings.dhuhr, adjustments.dhuhrAdjustment),
+          _settings.dhuhrSettings
+        ),
+        'Asr': (
+          PrayerNames.arabic['Asr']!,
+          _adjustTime(todayPrayers.timings.asr, adjustments.asrAdjustment),
+          _settings.asrSettings
+        ),
+        'Maghrib': (
+          PrayerNames.arabic['Maghrib']!,
+          _adjustTime(
+              todayPrayers.timings.maghrib, adjustments.maghribAdjustment),
+          _settings.maghribSettings
+        ),
+        'Isha': (
+          PrayerNames.arabic['Isha']!,
+          _adjustTime(todayPrayers.timings.isha, adjustments.ishaAdjustment),
+          _settings.ishaSettings
+        ),
+      };
+
+      for (var entry in prayers.entries) {
+        final prayerName = entry.key;
+        final arabicName = entry.value.$1;
+        final timeString = entry.value.$2;
+        final prayerSettings = entry.value.$3;
+
+        // Skip if notifications are disabled for this prayer
+        if (!prayerSettings.enabled) {
+          if (kDebugMode) {
+            debugPrint('⏭️ Skipping $prayerName - notifications disabled');
+          }
+          continue;
+        }
+
+        final timeParts = timeString.split(':');
+        final prayerTime = DateTime(
+          now.year,
+          now.month,
+          now.day,
+          int.parse(timeParts[0]),
+          int.parse(timeParts[1]),
+        );
+
+        final notificationTime = prayerTime.subtract(
+          Duration(minutes: prayerSettings.prePrayerReminderMinutes),
+        );
+
+        await PrayerNotificationService.schedulePrayerNotification(
+          prayerName: prayerName,
+          arabicName: arabicName,
+          timeString: timeString,
+          scheduledTime: notificationTime,
+        );
+      }
+
+      if (kDebugMode) {
+        final scheduledNotifs =
+            await PrayerNotificationService.getScheduledNotifications();
+        debugPrint(
+            '✅ Re-scheduled ${scheduledNotifs.length} prayer notifications with updated settings');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('❌ Error re-scheduling notifications: $e');
+      }
+    }
   }
 
   @override
@@ -87,18 +222,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: SafeArea(
           child: CustomScrollView(
             slivers: [
-              SliverToBoxAdapter(
-                child: _buildHeader(),
-              ),
-              SliverToBoxAdapter(
-                child: _buildOfflineDataSection(),
-              ),
-              SliverToBoxAdapter(
-                child: _buildNotificationSettingsSection(),
-              ),
-              SliverToBoxAdapter(
-                child: _buildDataManagementSection(),
-              ),
+              SliverToBoxAdapter(child: _buildHeader()),
+              SliverToBoxAdapter(child: _buildHijriAdjustmentSection()),
+              SliverToBoxAdapter(child: _buildPrayerTimeAdjustmentSection()),
+              SliverToBoxAdapter(child: _buildOfflineDataSection()),
+              SliverToBoxAdapter(child: _buildNotificationSettingsSection()),
               const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
             ],
           ),
@@ -115,15 +243,391 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Text(
             'الإعدادات',
-            style: AppTextStyles.headlineLarge(context).copyWith(
-              fontWeight: FontWeight.bold,
-            ),
+            style: AppTextStyles.headlineLarge(
+              context,
+            ).copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
             'تخصيص إشعارات الصلاة',
-            style: AppTextStyles.bodyMedium(context).copyWith(
-              color: AppColors.of(context).textSecondary,
+            style: AppTextStyles.bodyMedium(
+              context,
+            ).copyWith(color: AppColors.of(context).textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHijriAdjustmentSection() {
+    final colors = AppColors.of(context);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.md,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+            child: Row(
+              children: [
+                Icon(
+                  CupertinoIcons.moon,
+                  color: colors.primary,
+                  size: 22,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Text(
+                  'تعديل التاريخ الهجري',
+                  style: AppTextStyles.titleMedium(
+                    context,
+                  ).copyWith(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            decoration: AppDecorations.liquidGlass(context),
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'بعض الدول قد تختلف في بداية الشهر الهجري. يمكنك تعديل التاريخ الهجري بإضافة أو طرح أيام.',
+                  style: AppTextStyles.bodyMedium(context).copyWith(
+                    color: colors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Decrease button
+                    CupertinoButton(
+                      padding: const EdgeInsets.all(AppSpacing.sm),
+                      onPressed: _settings.hijriDateAdjustment > -2
+                          ? () {
+                              setState(() {
+                                _settings = _settings.copyWith(
+                                  hijriDateAdjustment:
+                                      _settings.hijriDateAdjustment - 1,
+                                );
+                              });
+                              _saveSettings();
+                            }
+                          : null,
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: colors.surface,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: colors.divider),
+                        ),
+                        child: Icon(
+                          CupertinoIcons.minus,
+                          color: _settings.hijriDateAdjustment > -2
+                              ? colors.primary
+                              : colors.textTertiary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.lg),
+                    // Current adjustment value
+                    Container(
+                      constraints: const BoxConstraints(minWidth: 80),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.sm,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colors.primary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        _settings.hijriDateAdjustment == 0
+                            ? 'بدون تعديل'
+                            : '${_settings.hijriDateAdjustment > 0 ? '+' : ''}${_settings.hijriDateAdjustment} يوم',
+                        style: AppTextStyles.titleSmall(context).copyWith(
+                          color: colors.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.lg),
+                    // Increase button
+                    CupertinoButton(
+                      padding: const EdgeInsets.all(AppSpacing.sm),
+                      onPressed: _settings.hijriDateAdjustment < 2
+                          ? () {
+                              setState(() {
+                                _settings = _settings.copyWith(
+                                  hijriDateAdjustment:
+                                      _settings.hijriDateAdjustment + 1,
+                                );
+                              });
+                              _saveSettings();
+                            }
+                          : null,
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: colors.surface,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: colors.divider),
+                        ),
+                        child: Icon(
+                          CupertinoIcons.add,
+                          color: _settings.hijriDateAdjustment < 2
+                              ? colors.primary
+                              : colors.textTertiary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrayerTimeAdjustmentSection() {
+    final colors = AppColors.of(context);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.md,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+            child: Row(
+              children: [
+                Icon(
+                  CupertinoIcons.clock,
+                  color: colors.primary,
+                  size: 22,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Text(
+                  'تعديل أوقات الصلاة',
+                  style: AppTextStyles.titleMedium(
+                    context,
+                  ).copyWith(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            decoration: AppDecorations.liquidGlass(context),
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'إذا كانت أوقات الصلاة غير دقيقة، يمكنك تعديلها يدوياً بإضافة أو طرح دقائق.',
+                  style: AppTextStyles.bodyMedium(context).copyWith(
+                    color: colors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                // Prayer time adjustment rows
+                _buildPrayerTimeAdjustmentRow(
+                  prayerName: 'Fajr',
+                  title: 'الفجر',
+                  adjustment: _settings.timeAdjustments.fajrAdjustment,
+                  onChanged: (value) {
+                    setState(() {
+                      _settings = _settings.copyWith(
+                        timeAdjustments: _settings.timeAdjustments.copyWith(
+                          fajrAdjustment: value,
+                        ),
+                      );
+                    });
+                    _saveSettings();
+                  },
+                ),
+                Divider(height: 1, color: colors.divider),
+                _buildPrayerTimeAdjustmentRow(
+                  prayerName: 'Dhuhr',
+                  title: 'الظهر',
+                  adjustment: _settings.timeAdjustments.dhuhrAdjustment,
+                  onChanged: (value) {
+                    setState(() {
+                      _settings = _settings.copyWith(
+                        timeAdjustments: _settings.timeAdjustments.copyWith(
+                          dhuhrAdjustment: value,
+                        ),
+                      );
+                    });
+                    _saveSettings();
+                  },
+                ),
+                Divider(height: 1, color: colors.divider),
+                _buildPrayerTimeAdjustmentRow(
+                  prayerName: 'Asr',
+                  title: 'العصر',
+                  adjustment: _settings.timeAdjustments.asrAdjustment,
+                  onChanged: (value) {
+                    setState(() {
+                      _settings = _settings.copyWith(
+                        timeAdjustments: _settings.timeAdjustments.copyWith(
+                          asrAdjustment: value,
+                        ),
+                      );
+                    });
+                    _saveSettings();
+                  },
+                ),
+                Divider(height: 1, color: colors.divider),
+                _buildPrayerTimeAdjustmentRow(
+                  prayerName: 'Maghrib',
+                  title: 'المغرب',
+                  adjustment: _settings.timeAdjustments.maghribAdjustment,
+                  onChanged: (value) {
+                    setState(() {
+                      _settings = _settings.copyWith(
+                        timeAdjustments: _settings.timeAdjustments.copyWith(
+                          maghribAdjustment: value,
+                        ),
+                      );
+                    });
+                    _saveSettings();
+                  },
+                ),
+                Divider(height: 1, color: colors.divider),
+                _buildPrayerTimeAdjustmentRow(
+                  prayerName: 'Isha',
+                  title: 'العشاء',
+                  adjustment: _settings.timeAdjustments.ishaAdjustment,
+                  onChanged: (value) {
+                    setState(() {
+                      _settings = _settings.copyWith(
+                        timeAdjustments: _settings.timeAdjustments.copyWith(
+                          ishaAdjustment: value,
+                        ),
+                      );
+                    });
+                    _saveSettings();
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrayerTimeAdjustmentRow({
+    required String prayerName,
+    required String title,
+    required int adjustment,
+    required Function(int) onChanged,
+  }) {
+    final colors = AppColors.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+      child: Row(
+        children: [
+          // Prayer name
+          SizedBox(
+            width: 60,
+            child: Text(
+              title,
+              style: AppTextStyles.bodyMedium(context).copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          // Decrease button
+          CupertinoButton(
+            padding: const EdgeInsets.all(4),
+            minimumSize: Size.zero,
+            onPressed:
+                adjustment > -30 ? () => onChanged(adjustment - 1) : null,
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: colors.divider),
+              ),
+              child: Icon(
+                CupertinoIcons.minus,
+                size: 16,
+                color: adjustment > -30 ? colors.primary : colors.textTertiary,
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          // Current adjustment value
+          Container(
+            constraints: const BoxConstraints(minWidth: 60),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.sm,
+              vertical: 4,
+            ),
+            decoration: BoxDecoration(
+              color: adjustment == 0
+                  ? colors.surface
+                  : colors.primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: adjustment == 0
+                    ? colors.divider
+                    : colors.primary.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Text(
+              adjustment == 0 ? '0' : '${adjustment > 0 ? '+' : ''}$adjustment',
+              style: AppTextStyles.labelMedium(context).copyWith(
+                color: adjustment == 0 ? colors.textSecondary : colors.primary,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          // Increase button
+          CupertinoButton(
+            padding: const EdgeInsets.all(4),
+            minimumSize: Size.zero,
+            onPressed: adjustment < 30 ? () => onChanged(adjustment + 1) : null,
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: colors.divider),
+              ),
+              child: Icon(
+                CupertinoIcons.add,
+                size: 16,
+                color: adjustment < 30 ? colors.primary : colors.textTertiary,
+              ),
+            ),
+          ),
+          const Spacer(),
+          // Minutes label
+          Text(
+            'دقيقة',
+            style: AppTextStyles.caption(context).copyWith(
+              color: colors.textSecondary,
             ),
           ),
         ],
@@ -136,7 +640,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     return Container(
       margin: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md, vertical: AppSpacing.md),
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.md,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -152,9 +658,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(width: AppSpacing.sm),
                 Text(
                   'بيانات أوقات الصلاة المحفوظة',
-                  style: AppTextStyles.titleMedium(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: AppTextStyles.titleMedium(
+                    context,
+                  ).copyWith(fontWeight: FontWeight.bold),
                 ),
               ],
             ),
@@ -185,9 +691,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SizedBox(height: AppSpacing.sm),
                   Text(
                     'اضغط على أيقونة الموقع في الشاشة الرئيسية ثم اختر "تحميل بيانات 7 سنوات" للعمل بدون إنترنت',
-                    style: AppTextStyles.caption(context).copyWith(
-                      color: colors.textSecondary,
-                    ),
+                    style: AppTextStyles.caption(
+                      context,
+                    ).copyWith(color: colors.textSecondary),
                   ),
                 ] else ...[
                   // Location name
@@ -202,9 +708,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         const SizedBox(width: AppSpacing.sm),
                         Text(
                           _currentLocationName!,
-                          style: AppTextStyles.bodyLarge(context).copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style: AppTextStyles.bodyLarge(
+                            context,
+                          ).copyWith(fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
@@ -247,9 +753,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   // Years range
                   Text(
                     'الفترة: ${_cacheStatus!['yearsRange']}',
-                    style: AppTextStyles.caption(context).copyWith(
-                      color: colors.textSecondary,
-                    ),
+                    style: AppTextStyles.caption(
+                      context,
+                    ).copyWith(color: colors.textSecondary),
                   ),
 
                   // Progress bar if not complete
@@ -261,8 +767,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         value: (_cacheStatus!['cachedMonths'] as int) /
                             (_cacheStatus!['totalMonths'] as int),
                         backgroundColor: colors.divider,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(colors.primary),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          colors.primary,
+                        ),
                         minHeight: 6,
                       ),
                     ),
@@ -281,7 +788,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     return Container(
       margin: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md, vertical: AppSpacing.md),
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.md,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -289,17 +798,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
             child: Row(
               children: [
-                Icon(
-                  CupertinoIcons.bell,
-                  color: colors.primary,
-                  size: 22,
-                ),
+                Icon(CupertinoIcons.bell, color: colors.primary, size: 22),
                 const SizedBox(width: AppSpacing.sm),
                 Text(
                   'إعدادات الإشعارات',
-                  style: AppTextStyles.titleMedium(context).copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: AppTextStyles.titleMedium(
+                    context,
+                  ).copyWith(fontWeight: FontWeight.bold),
                 ),
               ],
             ),
@@ -330,8 +835,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   settings: _settings.dhuhrSettings,
                   onChanged: (newSettings) {
                     setState(() {
-                      _settings =
-                          _settings.copyWith(dhuhrSettings: newSettings);
+                      _settings = _settings.copyWith(
+                        dhuhrSettings: newSettings,
+                      );
                     });
                     _saveSettings();
                   },
@@ -363,8 +869,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   settings: _settings.maghribSettings,
                   onChanged: (newSettings) {
                     setState(() {
-                      _settings =
-                          _settings.copyWith(maghribSettings: newSettings);
+                      _settings = _settings.copyWith(
+                        maghribSettings: newSettings,
+                      );
                     });
                     _saveSettings();
                   },
@@ -404,7 +911,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return CupertinoButton(
       padding: const EdgeInsets.all(AppSpacing.md),
       onPressed: () => _showNotificationSettingsDialog(
-          prayerName, title, settings, onChanged),
+        prayerName,
+        title,
+        settings,
+        onChanged,
+      ),
       child: Row(
         children: [
           CupertinoSwitch(
@@ -418,10 +929,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: AppTextStyles.bodyLarge(context),
-                ),
+                Text(title, style: AppTextStyles.bodyLarge(context)),
                 if (settings.enabled)
                   Text(
                     'تنبيه قبل ${settings.prePrayerReminderMinutes} دقيقة',
@@ -459,8 +967,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               children: [
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                  ),
                   decoration: BoxDecoration(
                     border: Border(
                       bottom: BorderSide(color: AppColors.of(context).divider),
@@ -475,16 +984,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       Text(
                         title,
-                        style: AppTextStyles.titleMedium(context).copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: AppTextStyles.titleMedium(
+                          context,
+                        ).copyWith(fontWeight: FontWeight.bold),
                       ),
                       CupertinoButton(
                         onPressed: () {
-                          onChanged(PrayerNotificationSettings(
-                            enabled: enabled,
-                            prePrayerReminderMinutes: prePrayerReminder,
-                          ));
+                          onChanged(
+                            PrayerNotificationSettings(
+                              enabled: enabled,
+                              prePrayerReminderMinutes: prePrayerReminder,
+                            ),
+                          );
                           Navigator.pop(context);
                         },
                         child: Text(
@@ -525,9 +1036,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       if (enabled) ...[
                         Text(
                           'وقت التنبيه قبل الصلاة',
-                          style: AppTextStyles.titleSmall(context).copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style: AppTextStyles.titleSmall(
+                            context,
+                          ).copyWith(fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: AppSpacing.sm),
                         Container(
@@ -556,8 +1067,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Text('0 د',
-                                      style: AppTextStyles.caption(context)),
+                                  Text(
+                                    '0 د',
+                                    style: AppTextStyles.caption(context),
+                                  ),
                                   Text(
                                     '$prePrayerReminder دقيقة',
                                     style: AppTextStyles.bodyMedium(context)
@@ -566,8 +1079,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       color: AppColors.of(context).primary,
                                     ),
                                   ),
-                                  Text('60 د',
-                                      style: AppTextStyles.caption(context)),
+                                  Text(
+                                    '60 د',
+                                    style: AppTextStyles.caption(context),
+                                  ),
                                 ],
                               ),
                             ],
@@ -581,248 +1096,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Future<void> _handleExport() async {
-    try {
-      final jsonString = await _storageService.exportData();
-      final timestamp = DateTime.now()
-          .toIso8601String()
-          .replaceAll(':', '-')
-          .split('.')
-          .first;
-      final fileName = 'athan_app_backup_$timestamp.json';
-
-      // Use file_picker's saveFile to let user choose location (works on Android 13+)
-      final result = await FilePicker.platform.saveFile(
-        dialogTitle: 'اختر مكان حفظ النسخة الاحتياطية',
-        fileName: fileName,
-        type: FileType.custom,
-        allowedExtensions: ['json'],
-        bytes: utf8.encode(jsonString),
-      );
-
-      if (result != null) {
-        // On some platforms, saveFile returns the path but doesn't write bytes
-        // So we need to write the file manually
-        if (Platform.isAndroid || Platform.isIOS) {
-          // bytes parameter handles the writing on mobile
-          _showSuccess('تم حفظ النسخة الاحتياطية بنجاح');
-        } else {
-          // For desktop platforms, write the file
-          final file = File(result);
-          await file.writeAsString(jsonString);
-          _showSuccess('تم حفظ النسخة الاحتياطية بنجاح');
-        }
-      }
-    } catch (e) {
-      _showError('فشل التصدير: $e');
-    }
-  }
-
-  Future<void> _handleImport() async {
-    try {
-      // Use withReadStream for Android 13+ compatibility with scoped storage
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['json'],
-        withData: true, // Important for Android 13+ scoped storage
-      );
-
-      if (result != null && result.files.single.bytes != null) {
-        // Use bytes directly for Android 13+ compatibility
-        final jsonString = utf8.decode(result.files.single.bytes!);
-
-        await _storageService.importData(jsonString);
-        await _loadSettings();
-
-        if (mounted) {
-          _showSuccess('تم استيراد البيانات بنجاح');
-        }
-      } else if (result != null && result.files.single.path != null) {
-        // Fallback for platforms that provide path
-        final file = File(result.files.single.path!);
-        final jsonString = await file.readAsString();
-
-        await _storageService.importData(jsonString);
-        await _loadSettings();
-
-        if (mounted) {
-          _showSuccess('تم استيراد البيانات بنجاح');
-        }
-      }
-    } catch (e) {
-      _showError('فشل الاستيراد: $e');
-    }
-  }
-
-  void _showError(String message) {
-    showCupertinoDialog(
-      context: context,
-      builder: (context) => CupertinoAlertDialog(
-        title: const Text('خطأ'),
-        content: Text(message),
-        actions: [
-          CupertinoDialogAction(
-            child: const Text('حسناً'),
-            onPressed: () => Navigator.pop(context),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showSuccess(String message) {
-    showCupertinoDialog(
-      context: context,
-      builder: (context) => CupertinoAlertDialog(
-        title: const Text('نجاح'),
-        content: Text(message),
-        actions: [
-          CupertinoDialogAction(
-            child: const Text('حسناً'),
-            onPressed: () => Navigator.pop(context),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDataManagementSection() {
-    final colors = AppColors.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'إدارة البيانات',
-            style: AppTextStyles.headlineSmall(context),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          Container(
-            decoration: AppDecorations.cleanCard(context),
-            child: Column(
-              children: [
-                CupertinoButton(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      CupertinoPageRoute(
-                        builder: (context) => const MigrationScreen(),
-                      ),
-                    );
-                  },
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: colors.cardBackground,
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                        ),
-                        child: Icon(
-                          CupertinoIcons.arrow_up_arrow_down_circle,
-                          color: colors.primary,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.md),
-                      Expanded(
-                        child: Text(
-                          'استيراد البيانات من الويب',
-                          style: AppTextStyles.bodyLarge(context),
-                        ),
-                      ),
-                      Icon(
-                        CupertinoIcons.chevron_left,
-                        size: 16,
-                        color: colors.textSecondary,
-                      ),
-                    ],
-                  ),
-                ),
-                Divider(
-                  height: 1,
-                  indent: AppSpacing.md,
-                  color: colors.divider,
-                ),
-                CupertinoButton(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  onPressed: _handleExport,
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: colors.cardBackground,
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                        ),
-                        child: Icon(
-                          CupertinoIcons.share,
-                          color: colors.primary,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.md),
-                      Expanded(
-                        child: Text(
-                          'تصدير البيانات (نسخة احتياطية)',
-                          style: AppTextStyles.bodyLarge(context),
-                        ),
-                      ),
-                      Icon(
-                        CupertinoIcons.chevron_left,
-                        size: 16,
-                        color: colors.textSecondary,
-                      ),
-                    ],
-                  ),
-                ),
-                Divider(
-                  height: 1,
-                  indent: AppSpacing.md,
-                  color: colors.divider,
-                ),
-                CupertinoButton(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  onPressed: _handleImport,
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: colors.cardBackground,
-                          borderRadius: BorderRadius.circular(AppRadius.sm),
-                        ),
-                        child: Icon(
-                          CupertinoIcons.arrow_down_doc,
-                          color: colors.primary,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.md),
-                      Expanded(
-                        child: Text(
-                          'استيراد نسخة احتياطية',
-                          style: AppTextStyles.bodyLarge(context),
-                        ),
-                      ),
-                      Icon(
-                        CupertinoIcons.chevron_left,
-                        size: 16,
-                        color: colors.textSecondary,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }

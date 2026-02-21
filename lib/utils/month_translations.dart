@@ -58,4 +58,24 @@ class MonthTranslations {
     });
     return result;
   }
+
+  /// Get Arabic month name from month number (1-12)
+  static String getMonthName(int month) {
+    const months = [
+      'يناير',
+      'فبراير',
+      'مارس',
+      'أبريل',
+      'مايو',
+      'يونيو',
+      'يوليو',
+      'أغسطس',
+      'سبتمبر',
+      'أكتوبر',
+      'نوفمبر',
+      'ديسمبر'
+    ];
+    if (month < 1 || month > 12) return '';
+    return months[month - 1];
+  }
 }

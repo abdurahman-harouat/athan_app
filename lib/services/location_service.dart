@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -83,7 +84,7 @@ class LocationService {
       try {
         await setLocaleIdentifier('ar');
       } catch (e) {
-        print('Error setting locale identifier: $e');
+        debugPrint('Error setting locale identifier: $e');
       }
 
       List<Placemark> placemarks = await placemarkFromCoordinates(
@@ -111,7 +112,7 @@ class LocationService {
         return place.name;
       }
     } catch (e) {
-      print('Error getting placemark: $e');
+      debugPrint('Error getting placemark: $e');
     }
     return null;
   }

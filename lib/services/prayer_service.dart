@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:athan_app_v2/models/prayer_times.dart';
 import 'package:athan_app_v2/services/connectivity_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -146,7 +147,7 @@ class PrayerService {
           await Future.delayed(const Duration(milliseconds: 200));
         } catch (e) {
           // Continue with next month even if one fails
-          print('Failed to fetch $year/$month: $e');
+          debugPrint('Failed to fetch $year/$month: $e');
         }
       }
     }

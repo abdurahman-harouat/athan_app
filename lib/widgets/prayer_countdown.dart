@@ -1,4 +1,5 @@
 import 'package:athan_app_v2/models/prayer_times.dart';
+import 'package:athan_app_v2/services/settings_notifier.dart';
 import 'package:athan_app_v2/theme.dart';
 import 'package:flutter/cupertino.dart';
 import 'dart:async';
@@ -30,22 +31,53 @@ class _PrayerCountdownState extends State<PrayerCountdown> {
     _timer = Timer.periodic(Duration(seconds: 1), (timer) {
       _updateCountdown();
     });
+    settingsNotifier.addListener(_onSettingsChanged);
   }
 
   @override
   void dispose() {
     _timer.cancel();
+    settingsNotifier.removeListener(_onSettingsChanged);
     super.dispose();
+  }
+
+  void _onSettingsChanged() {
+    _updateCountdown();
+  }
+
+  /// Adjusts a prayer time string by adding/subtracting minutes
+  String _adjustTime(String time, int adjustmentMinutes) {
+    if (adjustmentMinutes == 0) return time;
+
+    final parts = time.split(':');
+    final hours = int.parse(parts[0]);
+    final minutes = int.parse(parts[1]);
+
+    final totalMinutes = hours * 60 + minutes + adjustmentMinutes;
+    final adjustedHours = (totalMinutes ~/ 60) % 24;
+    final adjustedMinutes = totalMinutes % 60;
+
+    // Handle negative adjustments that go past midnight
+    final actualHours = totalMinutes < 0 ? 24 + adjustedHours : adjustedHours;
+
+    return '${actualHours.toString().padLeft(2, '0')}:${adjustedMinutes.abs().toString().padLeft(2, '0')}';
   }
 
   void _updateCountdown() {
     final now = DateTime.now();
+    final adjustments = settingsNotifier.settings.timeAdjustments;
+
     final prayers = {
-      'الفجر': _parseTime(widget.timings.fajr),
-      'الظهر': _parseTime(widget.timings.dhuhr),
-      'العصر': _parseTime(widget.timings.asr),
-      'المغرب': _parseTime(widget.timings.maghrib),
-      'العشاء': _parseTime(widget.timings.isha),
+      'الفجر': _parseTime(
+          _adjustTime(widget.timings.fajr, adjustments.fajrAdjustment)),
+      'الظهر': _parseTime(
+          _adjustTime(widget.timings.dhuhr, adjustments.dhuhrAdjustment)),
+      'العصر': _parseTime(
+          _adjustTime(widget.timings.asr, adjustments.asrAdjustment)),
+      'المغرب': _parseTime(
+          _adjustTime(widget.timings.maghrib, adjustments.maghribAdjustment)),
+      'العشاء': _parseTime(
+          _adjustTime(widget.timings.isha, adjustments.ishaAdjustment)),
     };
 
     String nextPrayer = '';
@@ -80,7 +112,9 @@ class _PrayerCountdownState extends State<PrayerCountdown> {
       }
     } else {
       final tomorrow = DateTime.now().add(Duration(days: 1));
-      final tomorrowFajr = _parseTime(widget.timings.fajr, tomorrow);
+      final tomorrowFajr = _parseTime(
+          _adjustTime(widget.timings.fajr, adjustments.fajrAdjustment),
+          tomorrow);
       final difference = tomorrowFajr.difference(now);
 
       if (mounted) {

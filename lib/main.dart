@@ -1,6 +1,7 @@
 import 'package:athan_app_v2/screens/main_shell.dart';
 import 'package:athan_app_v2/services/connectivity_service.dart';
 import 'package:athan_app_v2/services/prayer_notitfication_service.dart';
+import 'package:athan_app_v2/services/settings_notifier.dart';
 import 'package:athan_app_v2/services/storage_service.dart';
 import 'package:athan_app_v2/theme.dart';
 import 'package:flutter/cupertino.dart';
@@ -16,6 +17,7 @@ void main() async {
   await PrayerNotificationService.initialize();
   await StorageService().initialize();
   await ConnectivityService().initialize();
+  await settingsNotifier.loadSettings();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(MyApp());
 }

@@ -5,7 +5,7 @@ class PrayerNotificationSettings {
 
   PrayerNotificationSettings({
     this.enabled = true,
-    this.prePrayerReminderMinutes = 10,
+    this.prePrayerReminderMinutes = 5,
     this.departureReminderMinutes = 5,
   });
 
@@ -34,7 +34,7 @@ class PrayerNotificationSettings {
   factory PrayerNotificationSettings.fromJson(Map<String, dynamic> json) {
     return PrayerNotificationSettings(
       enabled: json['enabled'] ?? true,
-      prePrayerReminderMinutes: json['prePrayerReminderMinutes'] ?? 10,
+      prePrayerReminderMinutes: json['prePrayerReminderMinutes'] ?? 5,
       departureReminderMinutes: json['departureReminderMinutes'] ?? 5,
     );
   }
@@ -109,6 +109,76 @@ class TravelTimeSettings {
   }
 }
 
+/// Settings for adjusting prayer times manually
+class PrayerTimeAdjustments {
+  final int fajrAdjustment; // Minutes to add (positive) or subtract (negative)
+  final int dhuhrAdjustment;
+  final int asrAdjustment;
+  final int maghribAdjustment;
+  final int ishaAdjustment;
+
+  PrayerTimeAdjustments({
+    this.fajrAdjustment = 0,
+    this.dhuhrAdjustment = 0,
+    this.asrAdjustment = 0,
+    this.maghribAdjustment = 0,
+    this.ishaAdjustment = 0,
+  });
+
+  int getAdjustmentForPrayer(String prayerName) {
+    switch (prayerName) {
+      case 'Fajr':
+        return fajrAdjustment;
+      case 'Dhuhr':
+        return dhuhrAdjustment;
+      case 'Asr':
+        return asrAdjustment;
+      case 'Maghrib':
+        return maghribAdjustment;
+      case 'Isha':
+        return ishaAdjustment;
+      default:
+        return 0;
+    }
+  }
+
+  PrayerTimeAdjustments copyWith({
+    int? fajrAdjustment,
+    int? dhuhrAdjustment,
+    int? asrAdjustment,
+    int? maghribAdjustment,
+    int? ishaAdjustment,
+  }) {
+    return PrayerTimeAdjustments(
+      fajrAdjustment: fajrAdjustment ?? this.fajrAdjustment,
+      dhuhrAdjustment: dhuhrAdjustment ?? this.dhuhrAdjustment,
+      asrAdjustment: asrAdjustment ?? this.asrAdjustment,
+      maghribAdjustment: maghribAdjustment ?? this.maghribAdjustment,
+      ishaAdjustment: ishaAdjustment ?? this.ishaAdjustment,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'fajrAdjustment': fajrAdjustment,
+      'dhuhrAdjustment': dhuhrAdjustment,
+      'asrAdjustment': asrAdjustment,
+      'maghribAdjustment': maghribAdjustment,
+      'ishaAdjustment': ishaAdjustment,
+    };
+  }
+
+  factory PrayerTimeAdjustments.fromJson(Map<String, dynamic> json) {
+    return PrayerTimeAdjustments(
+      fajrAdjustment: json['fajrAdjustment'] ?? 0,
+      dhuhrAdjustment: json['dhuhrAdjustment'] ?? 0,
+      asrAdjustment: json['asrAdjustment'] ?? 0,
+      maghribAdjustment: json['maghribAdjustment'] ?? 0,
+      ishaAdjustment: json['ishaAdjustment'] ?? 0,
+    );
+  }
+}
+
 class AppSettings {
   final PrayerNotificationSettings fajrSettings;
   final PrayerNotificationSettings dhuhrSettings;
@@ -116,7 +186,9 @@ class AppSettings {
   final PrayerNotificationSettings maghribSettings;
   final PrayerNotificationSettings ishaSettings;
   final TravelTimeSettings travelTimeSettings;
+  final PrayerTimeAdjustments timeAdjustments;
   final bool darkMode;
+  final int hijriDateAdjustment; // Days to add/subtract from Hijri date
 
   AppSettings({
     PrayerNotificationSettings? fajrSettings,
@@ -125,13 +197,21 @@ class AppSettings {
     PrayerNotificationSettings? maghribSettings,
     PrayerNotificationSettings? ishaSettings,
     TravelTimeSettings? travelTimeSettings,
+    PrayerTimeAdjustments? timeAdjustments,
     this.darkMode = false,
-  })  : fajrSettings = fajrSettings ?? PrayerNotificationSettings(),
-        dhuhrSettings = dhuhrSettings ?? PrayerNotificationSettings(),
-        asrSettings = asrSettings ?? PrayerNotificationSettings(),
-        maghribSettings = maghribSettings ?? PrayerNotificationSettings(),
-        ishaSettings = ishaSettings ?? PrayerNotificationSettings(),
-        travelTimeSettings = travelTimeSettings ?? TravelTimeSettings();
+    this.hijriDateAdjustment = 0,
+  })  : fajrSettings = fajrSettings ??
+            PrayerNotificationSettings(prePrayerReminderMinutes: 5),
+        dhuhrSettings = dhuhrSettings ??
+            PrayerNotificationSettings(prePrayerReminderMinutes: 5),
+        asrSettings = asrSettings ??
+            PrayerNotificationSettings(prePrayerReminderMinutes: 5),
+        maghribSettings = maghribSettings ??
+            PrayerNotificationSettings(prePrayerReminderMinutes: 10),
+        ishaSettings = ishaSettings ??
+            PrayerNotificationSettings(prePrayerReminderMinutes: 5),
+        travelTimeSettings = travelTimeSettings ?? TravelTimeSettings(),
+        timeAdjustments = timeAdjustments ?? PrayerTimeAdjustments();
 
   PrayerNotificationSettings getSettingsForPrayer(String prayerName) {
     switch (prayerName) {
@@ -157,7 +237,9 @@ class AppSettings {
     PrayerNotificationSettings? maghribSettings,
     PrayerNotificationSettings? ishaSettings,
     TravelTimeSettings? travelTimeSettings,
+    PrayerTimeAdjustments? timeAdjustments,
     bool? darkMode,
+    int? hijriDateAdjustment,
   }) {
     return AppSettings(
       fajrSettings: fajrSettings ?? this.fajrSettings,
@@ -166,7 +248,9 @@ class AppSettings {
       maghribSettings: maghribSettings ?? this.maghribSettings,
       ishaSettings: ishaSettings ?? this.ishaSettings,
       travelTimeSettings: travelTimeSettings ?? this.travelTimeSettings,
+      timeAdjustments: timeAdjustments ?? this.timeAdjustments,
       darkMode: darkMode ?? this.darkMode,
+      hijriDateAdjustment: hijriDateAdjustment ?? this.hijriDateAdjustment,
     );
   }
 
@@ -178,7 +262,9 @@ class AppSettings {
       'maghribSettings': maghribSettings.toJson(),
       'ishaSettings': ishaSettings.toJson(),
       'travelTimeSettings': travelTimeSettings.toJson(),
+      'timeAdjustments': timeAdjustments.toJson(),
       'darkMode': darkMode,
+      'hijriDateAdjustment': hijriDateAdjustment,
     };
   }
 
@@ -202,7 +288,11 @@ class AppSettings {
       travelTimeSettings: json['travelTimeSettings'] != null
           ? TravelTimeSettings.fromJson(json['travelTimeSettings'])
           : null,
+      timeAdjustments: json['timeAdjustments'] != null
+          ? PrayerTimeAdjustments.fromJson(json['timeAdjustments'])
+          : null,
       darkMode: json['darkMode'] ?? false,
+      hijriDateAdjustment: json['hijriDateAdjustment'] ?? 0,
     );
   }
 }

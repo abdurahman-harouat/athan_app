@@ -5,6 +5,7 @@ import 'package:athan_app_v2/services/connectivity_service.dart';
 import 'package:athan_app_v2/services/location_service.dart';
 import 'package:athan_app_v2/services/prayer_notitfication_service.dart';
 import 'package:athan_app_v2/services/prayer_service.dart';
+import 'package:athan_app_v2/services/settings_notifier.dart';
 import 'package:athan_app_v2/theme.dart';
 import 'package:athan_app_v2/utils/month_translations.dart';
 import 'package:athan_app_v2/utils/prayer_icons.dart';
@@ -44,12 +45,22 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _initializeConnectivity();
     _initializeApp();
+    settingsNotifier.addListener(_onSettingsChanged);
   }
 
   @override
   void dispose() {
     _connectivitySubscription?.cancel();
+    settingsNotifier.removeListener(_onSettingsChanged);
     super.dispose();
+  }
+
+  void _onSettingsChanged() {
+    if (kDebugMode) {
+      debugPrint(
+          '🔄 Settings changed in HomeScreen - Fajr adjustment: ${settingsNotifier.settings.timeAdjustments.fajrAdjustment}');
+    }
+    setState(() {});
   }
 
   Future<void> _initializeConnectivity() async {
@@ -251,12 +262,30 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _scheduleTodaysPrayers(PrayerDay prayerDay) async {
+    final adjustments = settingsNotifier.settings.timeAdjustments;
+
+    // Apply adjustments to prayer times
     final prayers = {
-      'Fajr': (PrayerNames.arabic['Fajr']!, prayerDay.timings.fajr),
-      'Dhuhr': (PrayerNames.arabic['Dhuhr']!, prayerDay.timings.dhuhr),
-      'Asr': (PrayerNames.arabic['Asr']!, prayerDay.timings.asr),
-      'Maghrib': (PrayerNames.arabic['Maghrib']!, prayerDay.timings.maghrib),
-      'Isha': (PrayerNames.arabic['Isha']!, prayerDay.timings.isha),
+      'Fajr': (
+        PrayerNames.arabic['Fajr']!,
+        _adjustTime(prayerDay.timings.fajr, adjustments.fajrAdjustment)
+      ),
+      'Dhuhr': (
+        PrayerNames.arabic['Dhuhr']!,
+        _adjustTime(prayerDay.timings.dhuhr, adjustments.dhuhrAdjustment)
+      ),
+      'Asr': (
+        PrayerNames.arabic['Asr']!,
+        _adjustTime(prayerDay.timings.asr, adjustments.asrAdjustment)
+      ),
+      'Maghrib': (
+        PrayerNames.arabic['Maghrib']!,
+        _adjustTime(prayerDay.timings.maghrib, adjustments.maghribAdjustment)
+      ),
+      'Isha': (
+        PrayerNames.arabic['Isha']!,
+        _adjustTime(prayerDay.timings.isha, adjustments.ishaAdjustment)
+      ),
     };
 
     // Cancel all existing notifications first
@@ -293,7 +322,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (kDebugMode) {
       final scheduledNotifs =
           await PrayerNotificationService.getScheduledNotifications();
-      print('✅ Scheduled ${scheduledNotifs.length} prayer notifications');
+      debugPrint('✅ Scheduled ${scheduledNotifs.length} prayer notifications');
     }
   }
 
@@ -306,12 +335,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _getNextPrayerName(PrayerTimings timings) {
     final now = DateTime.now();
+    final adjustments = settingsNotifier.settings.timeAdjustments;
+
     final prayers = {
-      'الفجر': _parseTime(timings.fajr),
-      'الظهر': _parseTime(timings.dhuhr),
-      'العصر': _parseTime(timings.asr),
-      'المغرب': _parseTime(timings.maghrib),
-      'العشاء': _parseTime(timings.isha),
+      'الفجر':
+          _parseTime(_adjustTime(timings.fajr, adjustments.fajrAdjustment)),
+      'الظهر':
+          _parseTime(_adjustTime(timings.dhuhr, adjustments.dhuhrAdjustment)),
+      'العصر': _parseTime(_adjustTime(timings.asr, adjustments.asrAdjustment)),
+      'المغرب': _parseTime(
+          _adjustTime(timings.maghrib, adjustments.maghribAdjustment)),
+      'العشاء':
+          _parseTime(_adjustTime(timings.isha, adjustments.ishaAdjustment)),
     };
 
     String nextPrayer = '';
@@ -341,6 +376,24 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Adjusts a prayer time string by adding/subtracting minutes
+  String _adjustTime(String time, int adjustmentMinutes) {
+    if (adjustmentMinutes == 0) return time;
+
+    final parts = time.split(':');
+    final hours = int.parse(parts[0]);
+    final minutes = int.parse(parts[1]);
+
+    final totalMinutes = hours * 60 + minutes + adjustmentMinutes;
+    final adjustedHours = (totalMinutes ~/ 60) % 24;
+    final adjustedMinutes = totalMinutes % 60;
+
+    // Handle negative adjustments that go past midnight
+    final actualHours = totalMinutes < 0 ? 24 + adjustedHours : adjustedHours;
+
+    return '${actualHours.toString().padLeft(2, '0')}:${adjustedMinutes.abs().toString().padLeft(2, '0')}';
+  }
+
   Widget _buildPrayerTimeRow(String name, String time, bool isNext) {
     return Builder(
       builder: (context) {
@@ -356,10 +409,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             decoration: isNext
                 ? BoxDecoration(
-                    color: colors.primary.withOpacity(0.15),
+                    color: colors.primary.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(AppRadius.md),
                     border: Border.all(
-                      color: colors.primary.withOpacity(0.3),
+                      color: colors.primary.withValues(alpha: 0.3),
                       width: 2.0,
                     ),
                   )
@@ -730,7 +783,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: (_isOnline
                                   ? CupertinoColors.activeGreen
                                   : CupertinoColors.systemRed)
-                              .withOpacity(0.4),
+                              .withValues(alpha: 0.4),
                           blurRadius: 4,
                           spreadRadius: 1,
                         ),
@@ -801,7 +854,7 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: AppColors.of(context).textPrimary.withOpacity(0.05),
+            color: AppColors.of(context).textPrimary.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: Offset(0, 4),
           ),
@@ -935,16 +988,26 @@ class _HomeScreenState extends State<HomeScreen> {
                                         padding: EdgeInsets.all(AppSpacing.md),
                                         child: Column(
                                           children: [
-                                            Text(
-                                              '${_prayerDays[_selectedDate.day - 1].hijri.day} ${MonthTranslations.getHijriMonth(_prayerDays[_selectedDate.day - 1].hijri.monthEn)} ${_prayerDays[_selectedDate.day - 1].hijri.year}',
-                                              style: AppTextStyles.titleLarge(
-                                                      context)
-                                                  .copyWith(
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                              textDirection:
-                                                  ui.TextDirection.rtl,
-                                            ),
+                                            Builder(builder: (context) {
+                                              // Apply hijri date adjustment
+                                              final hijri = _prayerDays[
+                                                      _selectedDate.day - 1]
+                                                  .hijri;
+                                              final adjustedDay =
+                                                  int.parse(hijri.day) +
+                                                      settingsNotifier.settings
+                                                          .hijriDateAdjustment;
+                                              return Text(
+                                                '$adjustedDay ${MonthTranslations.getHijriMonth(hijri.monthEn)} ${hijri.year}',
+                                                style: AppTextStyles.titleLarge(
+                                                        context)
+                                                    .copyWith(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                                textDirection:
+                                                    ui.TextDirection.rtl,
+                                              );
+                                            }),
                                             SizedBox(height: AppSpacing.sm),
                                             Container(
                                               width: 100,
@@ -954,12 +1017,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                                   colors: [
                                                     AppColors.of(context)
                                                         .divider
-                                                        .withOpacity(0.0),
+                                                        .withValues(alpha: 0.0),
                                                     AppColors.of(context)
                                                         .divider,
                                                     AppColors.of(context)
                                                         .divider
-                                                        .withOpacity(0.0),
+                                                        .withValues(alpha: 0.0),
                                                   ],
                                                 ),
                                               ),
@@ -990,55 +1053,92 @@ class _HomeScreenState extends State<HomeScreen> {
                                                   ? _currentNextPrayer
                                                   : '';
 
+                                              // Get time adjustments
+                                              final adjustments =
+                                                  settingsNotifier
+                                                      .settings.timeAdjustments;
+
+                                              if (kDebugMode) {
+                                                debugPrint(
+                                                    '🕐 Building prayer times with adjustments:');
+                                                debugPrint(
+                                                    '   Fajr: ${adjustments.fajrAdjustment} min');
+                                                debugPrint(
+                                                    '   Dhuhr: ${adjustments.dhuhrAdjustment} min');
+                                                debugPrint(
+                                                    '   Asr: ${adjustments.asrAdjustment} min');
+                                                debugPrint(
+                                                    '   Maghrib: ${adjustments.maghribAdjustment} min');
+                                                debugPrint(
+                                                    '   Isha: ${adjustments.ishaAdjustment} min');
+                                              }
+
+                                              // Get adjusted times
+                                              final fajrTime = _adjustTime(
+                                                _prayerDays[
+                                                        _selectedDate.day - 1]
+                                                    .timings
+                                                    .fajr,
+                                                adjustments.fajrAdjustment,
+                                              );
+                                              final dhuhrTime = _adjustTime(
+                                                _prayerDays[
+                                                        _selectedDate.day - 1]
+                                                    .timings
+                                                    .dhuhr,
+                                                adjustments.dhuhrAdjustment,
+                                              );
+                                              final asrTime = _adjustTime(
+                                                _prayerDays[
+                                                        _selectedDate.day - 1]
+                                                    .timings
+                                                    .asr,
+                                                adjustments.asrAdjustment,
+                                              );
+                                              final maghribTime = _adjustTime(
+                                                _prayerDays[
+                                                        _selectedDate.day - 1]
+                                                    .timings
+                                                    .maghrib,
+                                                adjustments.maghribAdjustment,
+                                              );
+                                              final ishaTime = _adjustTime(
+                                                _prayerDays[
+                                                        _selectedDate.day - 1]
+                                                    .timings
+                                                    .isha,
+                                                adjustments.ishaAdjustment,
+                                              );
+
                                               return Column(
                                                 children: [
                                                   _buildPrayerTimeRow(
                                                     'الفجر',
-                                                    _prayerDays[
-                                                            _selectedDate.day -
-                                                                1]
-                                                        .timings
-                                                        .fajr,
+                                                    fajrTime,
                                                     isToday &&
                                                         nextPrayer == 'الفجر',
                                                   ),
                                                   _buildPrayerTimeRow(
                                                     'الظهر',
-                                                    _prayerDays[
-                                                            _selectedDate.day -
-                                                                1]
-                                                        .timings
-                                                        .dhuhr,
+                                                    dhuhrTime,
                                                     isToday &&
                                                         nextPrayer == 'الظهر',
                                                   ),
                                                   _buildPrayerTimeRow(
                                                     'العصر',
-                                                    _prayerDays[
-                                                            _selectedDate.day -
-                                                                1]
-                                                        .timings
-                                                        .asr,
+                                                    asrTime,
                                                     isToday &&
                                                         nextPrayer == 'العصر',
                                                   ),
                                                   _buildPrayerTimeRow(
                                                     'المغرب',
-                                                    _prayerDays[
-                                                            _selectedDate.day -
-                                                                1]
-                                                        .timings
-                                                        .maghrib,
+                                                    maghribTime,
                                                     isToday &&
                                                         nextPrayer == 'المغرب',
                                                   ),
                                                   _buildPrayerTimeRow(
                                                     'العشاء',
-                                                    _prayerDays[
-                                                            _selectedDate.day -
-                                                                1]
-                                                        .timings
-                                                        .isha,
+                                                    ishaTime,
                                                     isToday &&
                                                         nextPrayer == 'العشاء',
                                                   ),
